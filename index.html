@@ -45,7 +45,9 @@
           'serviceWorker' in navigator &&
           window.isSecureContext
         ) {
-          navigator.serviceWorker.register('./coi-serviceworker.js').catch(function () {});
+          navigator.serviceWorker
+            .register('./coi-serviceworker.js', { updateViaCache: 'none' })
+            .catch(function () {});
         }
       })();
     </script>

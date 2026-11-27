@@ -13,6 +13,8 @@
 - Removed unused packages (`@google/genai`, `express`, `@types/express`, `dotenv`, `motion`, `autoprefixer`) and Google AI Studio remnants (`.env.example`, `bun.lock`).
 - Replaced external runtime CDNs (`cdn.jsdelivr.net`, `esm.sh`, `fonts.googleapis.com`, `fonts.gstatic.com`, floating `@gradio/client/+esm`) with pinned local vendor IIFE bundles (`assets/vendor/`), local ONNX WASM assets (`assets/wasm/`), and bundled local WOFF2 fonts (`assets/fonts/`).
 - Moved all development source, Node/Vite build tooling, and local `START.bat` launcher into the gitignored `_dev/` directory so the repository root serves directly as a flat static site (`index.html`, `assets/`, `manifest.webmanifest`, `coi-serviceworker.js`, `.nojekyll`) ready for `file://` drag-and-drop and GitHub Pages root deployment.
+- Fixed `coi-serviceworker.js` to attach `Cross-Origin-Embedder-Policy: credentialless` and `Cross-Origin-Resource-Policy: same-origin` on same-origin worker/WASM responses (not just navigation documents), resolving the 7 `ERR_BLOCKED_BY_RESPONSE` / `CoepFrameResourceNeedsCoepHeader` pthread worker blocks (`ort-wasm-simd-threaded*.mjs`) and model-init stalls on GitHub Pages.
+- Added an inactivity stall watchdog, explicit post-download runtime-init phase reporting (`79%`), and single-threaded WASM fallback safety in `aiBgEngine.ts` plus `updateViaCache: 'none'` for `coi-serviceworker.js` registration.
 
 ### Sample Photos & Asset Optimization
 - Optimized bundled sample photos (`sample-portrait.jpg`, `sample-product.jpg`, `sample-sneaker.jpg`) from ~2.39 MB combined down to ~555 KB total progressive JPEGs without reducing pixel dimensions.

@@ -35,13 +35,14 @@ All automated unit tests, TypeScript checks, and browser E2E suites listed below
 | Bulk Studio Sample Load (`file://`) | Chromium, Chrome, Edge | **PASS** — 3 sample cards queued cleanly, zero console/page errors |
 | GitHub Pages Subpath Simulation (`/alhaj-cut-studio/`) on Mobile (`390×844`) | Chromium, Chrome, Edge | **PASS** — `window.crossOriginIsolated === true`, zero HTTP 404s, zero horizontal overflow, mobile zoom controls visible, local PNG upload works |
 | Non-COI Single-Thread capability badge & Offline Manual fallback | Chromium, Chrome, Edge | **PASS** — Reports `WASM Single-Thread` (Chromium without GPU) / `WebGPU Ready` (Chrome/Edge), switches to `Offline Mode`, and opens photo in Manual Studio cleanly |
-| Real AI Engine 1 (`rmbg-local`) Portrait cutout + Compare restore | Google Chrome | **PASS** — Inference completed in `20.25s`, output `1200×896` verified (`tl=0`, `tr=0`, `center=255`) before and immediately after toggling Compare ON/OFF, zero external CDN JS/font requests |
-| Real AI Engine 1 Cached Model Reuse (Sneaker) | Google Chrome | **PASS** — Completed in `0.38s` without re-downloading weights (`tl=0`, `tr=0`, `center=255`) |
+| Real AI Engine 1 (`rmbg-local`) Portrait cutout + Compare restore | Google Chrome | **PASS** — Inference completed in `23.79s`, output `1200×896` verified (`tl=0`, `tr=0`, `center=255`) before and immediately after toggling Compare ON/OFF, zero external CDN JS/font requests |
+| Real AI Engine 1 Cached Model Reuse (Sneaker) | Google Chrome | **PASS** — Completed in `0.85s` without re-downloading weights (`tl=0`, `tr=0`, `center=255`) |
 | Offline AI Inference from Cached Weights (Product) | Google Chrome | **PASS** — Completed offline (`set_offline(True)`) using cached model (`1024×1024`, `tl=0`, `tr=0`, `center=255`) |
 | Real AI Engine 2 (`imgly-local` ISNet) | Google Chrome | **PASS** — Loaded 2 local WASM assets from `127.0.0.1/assets/wasm/imgly/` (`remote_wasm=[]`), produced real cutout (`1024×1024`, `tl=0`, `tr=0`, `center=255`) |
 | Bulk AI Processing (5 images + duplicate names) & ZIP Export | Google Chrome | **PASS** — Processed 5/5 items, downloaded `alhaj-cut-batch-5-images.zip` containing 5 unique cutout PNGs (`dup-cutout.png`, `dup-2-cutout.png`, plus 3 samples), opened item in Single Studio |
 | Cloud Privacy Consent Guard (`notlain-cloud`) | Google Chrome | **PASS** — Displayed confirmation `alertdialog` before upload; clicking Cancel reverted engine to `rmbg-local` with zero external requests |
 | Slow Network (`180 KB/s`, `200ms` latency) & Cancel Abort | Google Chrome | **PASS** — Progress indicator rendered cleanly; Cancel aborted processing cleanly with Retry & Manual Studio options |
+| GitHub Pages COI Service Worker Visit 2 (Plain HTTP without server headers) | Google Chrome & Chromium | **PASS** — `coi-serviceworker.js` sets COEP/CORP on same-origin worker & WASM scripts (`ort-wasm-simd-threaded*.mjs`), `window.crossOriginIsolated === true`, `rmbg-local` + user upload + `imgly-local` complete with **0 DevTools Issues** and **0 failed requests** |
 
 ---
 
