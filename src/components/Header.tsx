@@ -1,7 +1,7 @@
-import { Cpu, Globe } from 'lucide-react';
+import { Cpu, Globe, WifiOff } from 'lucide-react';
 import { BRAND_CONFIG, type SupportedLocale } from '../config';
 import type { TranslationDictionary } from '../i18n/translations';
-import type { AiEngineId, WorkspaceMode } from '../types/studio';
+import type { AiEngineId, RuntimeCapabilities, WorkspaceMode } from '../types/studio';
 import { BrandLogo } from './BrandLogo';
 
 interface HeaderProps {
@@ -12,6 +12,7 @@ interface HeaderProps {
   onModeChange: (mode: WorkspaceMode) => void;
   selectedEngine: AiEngineId;
   onEngineChange: (engine: AiEngineId) => void;
+  capabilities: RuntimeCapabilities;
 }
 
 const LOCALE_OPTIONS: { code: SupportedLocale; label: string }[] = [
@@ -29,9 +30,20 @@ export function Header({
   onModeChange,
   selectedEngine,
   onEngineChange,
+  capabilities,
 }: HeaderProps) {
   const brandName = BRAND_CONFIG.name[locale];
   const shortBrandName = BRAND_CONFIG.shortName[locale];
+
+  const envBadgeLabel = capabilities.isFileProtocol
+    ? t.envFileMode
+    : !capabilities.isOnline
+    ? t.envOffline
+    : capabilities.hasWebGPU
+    ? t.envWebGPU
+    : capabilities.crossOriginIsolated && capabilities.hasSharedArrayBuffer
+    ? t.envWasmMt
+    : t.envWasmSt;
 
   return (
     <header className="sticky top-0 z-40 h-16 border-b border-[#E5E7EB] studio-glass">
@@ -47,10 +59,10 @@ export function Header({
           className="flex items-center gap-2 text-[#111827] whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0D9488] rounded-lg"
         >
           <BrandLogo size={30} />
-          <span className="sm:hidden text-sm font-bold tracking-tight">
+          <span dir="ltr" className="sm:hidden text-sm font-bold tracking-tight">
             {shortBrandName}
           </span>
-          <span className="hidden sm:inline text-base lg:text-lg font-bold tracking-tight">
+          <span dir="ltr" className="hidden sm:inline text-base lg:text-lg font-bold tracking-tight">
             {brandName}
           </span>
         </a>
@@ -58,13 +70,15 @@ export function Header({
         {/* Zone 2: Clean Single-Line Navigation Links */}
         <nav
           aria-label="Primary Navigation"
-          className="hidden lg:flex items-center gap-7 text-sm font-medium text-[#475569]"
+          className="hidden lg:flex items-center gap-6 text-sm font-medium text-[#475569]"
         >
           <button
             type="button"
             onClick={() => {
               onModeChange('single');
-              document.getElementById('studio-workspace')?.scrollIntoView({ behavior: 'smooth' });
+              document
+                .getElementById('studio-workspace')
+                ?.scrollIntoView({ behavior: 'smooth' });
             }}
             className={`py-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 ${
               mode === 'single'
@@ -78,7 +92,9 @@ export function Header({
             type="button"
             onClick={() => {
               onModeChange('bulk');
-              document.getElementById('studio-workspace')?.scrollIntoView({ behavior: 'smooth' });
+              document
+                .getElementById('studio-workspace')
+                ?.scrollIntoView({ behavior: 'smooth' });
             }}
             className={`py-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 ${
               mode === 'bulk'
@@ -102,9 +118,28 @@ export function Header({
           </a>
         </nav>
 
-        {/* Zone 3: Triple AI Engine Selector + Language Switcher */}
+        {/* Zone 3: Capability Badge + AI Engine Selector + Language Switcher */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 min-w-0">
-          {/* AI Engine Selector (required in top bar) */}
+          <span
+            data-testid="runtime-capability-badge"
+            title={capabilities.webgpuAdapterName || envBadgeLabel}
+            className={`hidden xl:inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap ${
+              capabilities.isFileProtocol
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : !capabilities.isOnline
+                ? 'border-slate-200 bg-slate-100 text-slate-700'
+                : capabilities.hasWebGPU
+                ? 'border-[#0D9488]/30 bg-[#0D9488]/10 text-[#0F766E]'
+                : 'border-[#E5E7EB] bg-[#F9FAFB] text-[#475569]'
+            }`}
+          >
+            {!capabilities.isOnline && !capabilities.isFileProtocol && (
+              <WifiOff className="h-3 w-3 shrink-0" aria-hidden="true" />
+            )}
+            <span>{envBadgeLabel}</span>
+          </span>
+
+          {/* AI Engine Selector */}
           <div className="relative flex items-center min-w-0">
             <Cpu
               className="pointer-events-none absolute start-2 sm:start-2.5 h-3.5 w-3.5 text-[#0D9488]"
@@ -118,7 +153,7 @@ export function Header({
               aria-label={t.engineLabel}
               value={selectedEngine}
               onChange={(e) => onEngineChange(e.target.value as AiEngineId)}
-              className="h-9 w-[132px] sm:w-auto sm:max-w-[235px] truncate rounded-lg border border-[#E5E7EB] bg-white ps-7 sm:ps-8 pe-2 sm:pe-3 text-xs sm:text-[13px] font-medium text-[#111827] shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors hover:border-[#CBD5E1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0D9488] cursor-pointer"
+              className="h-9 w-[132px] sm:w-auto sm:max-w-[245px] truncate rounded-lg border border-[#E5E7EB] bg-white ps-7 sm:ps-8 pe-2 sm:pe-3 text-xs sm:text-[13px] font-medium text-[#111827] shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors hover:border-[#CBD5E1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0D9488] cursor-pointer"
             >
               <option value="rmbg-local">{t.engineRmbgName}</option>
               <option value="imgly-local">{t.engineImglyName}</option>

@@ -9,12 +9,14 @@ interface BeforeAfterCurtainProps {
   afterLabel: string;
   alt: string;
   aspectClass?: string;
+  aspectRatio?: number;
+  imageFit?: 'contain' | 'cover';
   initialPosition?: number;
 }
 
 /**
  * Interactive draggable split-screen comparison curtain over a subtle checkerboard transparency grid.
- * Works identically in RTL and LTR via explicit pointer geometry (always left-to-right visual curtain).
+ * Uses matching object-fit for Before & After so pixels align 1:1 under the curtain in both RTL and LTR.
  */
 export function BeforeAfterCurtain({
   beforeSrc,
@@ -24,6 +26,8 @@ export function BeforeAfterCurtain({
   afterLabel,
   alt,
   aspectClass = 'aspect-[4/3]',
+  aspectRatio,
+  imageFit = 'contain',
   initialPosition = 50,
 }: BeforeAfterCurtainProps) {
   const [position, setPosition] = useState(initialPosition);
@@ -67,6 +71,8 @@ export function BeforeAfterCurtain({
     }
   };
 
+  const fitClass = imageFit === 'cover' ? 'object-cover' : 'object-contain';
+
   return (
     <div
       ref={containerRef}
@@ -82,9 +88,16 @@ export function BeforeAfterCurtain({
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
       onKeyDown={handleKeyDown}
-      className={`relative w-full ${aspectClass} overflow-hidden rounded-xl border border-[#E5E7EB] checkerboard-grid select-none touch-none cursor-ew-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0D9488]`}
+      style={
+        aspectRatio && Number.isFinite(aspectRatio)
+          ? { aspectRatio: String(aspectRatio) }
+          : undefined
+      }
+      className={`relative w-full ${
+        aspectRatio ? 'max-h-[520px] mx-auto' : aspectClass
+      } overflow-hidden rounded-xl border border-[#E5E7EB] checkerboard-grid select-none touch-none cursor-ew-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0D9488]`}
     >
-      {/* After layer (full width underneath — transparent checkerboard visible behind cutout) */}
+      {/* After layer */}
       <div className="absolute inset-0">
         {afterOverlayNode ? (
           afterOverlayNode
@@ -92,9 +105,8 @@ export function BeforeAfterCurtain({
           <img
             src={afterSrc}
             alt={`${alt} - ${afterLabel}`}
-            referrerPolicy="no-referrer"
             draggable={false}
-            className="h-full w-full object-contain"
+            className={`h-full w-full ${fitClass}`}
           />
         ) : null}
       </div>
@@ -107,13 +119,12 @@ export function BeforeAfterCurtain({
         <img
           src={beforeSrc}
           alt={`${alt} - ${beforeLabel}`}
-          referrerPolicy="no-referrer"
           draggable={false}
-          className="h-full w-full object-cover"
+          className={`h-full w-full ${fitClass}`}
         />
       </div>
 
-      {/* Labels — crisp studio captions with measured contrast scrim */}
+      {/* Labels */}
       <span className="pointer-events-none absolute top-3 left-3 rounded-md bg-[#111827]/75 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm">
         {beforeLabel}
       </span>

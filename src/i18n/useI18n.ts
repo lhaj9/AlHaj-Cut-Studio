@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { DEFAULT_LOCALE, type SupportedLocale } from '../config';
 import { TRANSLATIONS, type TranslationDictionary } from './translations';
 
-const STORAGE_KEY = 'noorcut_studio_locale';
+const STORAGE_KEY = 'alhaj_cut_studio_locale';
+const LEGACY_STORAGE_KEY = 'noorcut_studio_locale';
 
 function readInitialLocale(): SupportedLocale {
   if (typeof window === 'undefined') return DEFAULT_LOCALE;
@@ -10,6 +11,11 @@ function readInitialLocale(): SupportedLocale {
     const saved = window.localStorage.getItem(STORAGE_KEY) as SupportedLocale | null;
     if (saved && saved in TRANSLATIONS) {
       return saved;
+    }
+    const legacySaved = window.localStorage.getItem(LEGACY_STORAGE_KEY) as SupportedLocale | null;
+    if (legacySaved && legacySaved in TRANSLATIONS) {
+      window.localStorage.setItem(STORAGE_KEY, legacySaved);
+      return legacySaved;
     }
   } catch {
     // Ignore storage quota / privacy mode errors

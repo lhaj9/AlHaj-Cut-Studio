@@ -5,41 +5,52 @@ interface BrandLogoProps {
 }
 
 /**
- * Strictly 2D Flat Minimalist Vector Mark controlled via BRAND_CONFIG.
- * Depicts a clean geometric framing aperture and subject cutout silhouette.
+ * 2D Flat Geometric Studio Cutout Mark for AlHaj Cut Studio.
+ * Controlled via BRAND_CONFIG colors (#0D9488 primary teal, #1E293B slate).
  */
 export function BrandLogo({ size = 32 }: BrandLogoProps) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 32 32"
+      viewBox="0 0 36 36"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden="true"
       className="shrink-0"
     >
-      {/* Flat slate base frame */}
+      {/* Slate precision studio frame */}
       <rect
         x="2"
         y="2"
-        width="28"
-        height="28"
-        rx="7"
+        width="32"
+        height="32"
+        rx="8.5"
         fill={BRAND_CONFIG.colors.secondary}
       />
-      {/* Cutout grid accent corner (top-right) */}
-      <rect x="17" y="7" width="4" height="4" rx="1" fill="#334155" />
-      <rect x="21" y="11" width="4" height="4" rx="1" fill="#334155" />
-      <rect x="17" y="15" width="4" height="4" rx="1" fill="#334155" />
-      {/* Sharp emerald geometric cutout plane */}
+      {/* Subtle transparency checkerboard tiles in top-right */}
+      <rect x="20" y="7" width="4" height="4" rx="1" fill="#334155" />
+      <rect x="24" y="11" width="4" height="4" rx="1" fill="#334155" />
+      <rect x="20" y="15" width="4" height="4" rx="1" fill="#334155" />
+      <rect x="24" y="19" width="4" height="4" rx="1" fill="#334155" />
+      {/* Precision emerald cutout sheet with diagonal blade corner */}
       <path
-        d="M8 22V11.5C8 10.1193 9.11929 9 10.5 9H16.5L22 14.5V22C22 23.1046 21.1046 24 20 24H10C8.89543 24 8 23.1046 8 22Z"
+        d="M8.5 25.5V11.5C8.5 9.84315 9.84315 8.5 11.5 8.5H19L25.5 15V25.5C25.5 26.8807 24.3807 28 23 28H11C9.61929 28 8.5 26.8807 8.5 25.5Z"
         fill={BRAND_CONFIG.colors.primary}
       />
-      {/* Pure white minimalist inner lens/cutout notch */}
-      <circle cx="14.5" cy="17" r="3.2" fill="#FFFFFF" />
-      <path d="M16.5 9L22 14.5H17.5C16.9477 14.5 16.5 14.0523 16.5 13.5V9Z" fill="#CCFBF1" />
+      {/* Corner fold highlight */}
+      <path
+        d="M19 8.5L25.5 15H20.5C19.6716 15 19 14.3284 19 13.5V8.5Z"
+        fill="#CCFBF1"
+      />
+      {/* Clean geometric subject / aperture cut */}
+      <circle cx="16" cy="19.5" r="4" fill="#FFFFFF" />
+      <path
+        d="M12.5 25.5C13.2 23.6 14.5 22.7 16 22.7C17.5 22.7 18.8 23.6 19.5 25.5"
+        stroke="#FFFFFF"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

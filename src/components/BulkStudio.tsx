@@ -9,13 +9,18 @@ import {
   Loader2,
   Pause,
   Play,
+  RotateCcw,
   Trash2,
   Upload,
   X,
 } from 'lucide-react';
 import { SAMPLE_PHOTOS } from '../data/samplePhotos';
 import type { TranslationDictionary } from '../i18n/translations';
-import { removeBackgroundWithAI } from '../services/aiBgEngine';
+import {
+  decodeSourceToCanvas,
+  removeBackgroundWithAI,
+  resolveImageSourceToBlob,
+} from '../services/aiBgEngine';
 import type {
   AiEngineId,
   AspectPresetId,
@@ -23,31 +28,64 @@ import type {
   BatchItem,
   CutoutResult,
   ExportFormat,
+  RuntimeCapabilities,
 } from '../types/studio';
 import { renderBatchItemBlob } from '../utils/canvasCompositor';
 import {
   getExtensionForFormat,
+  getUniqueExportBaseName,
   sanitizeExportBaseName,
 } from '../utils/studioMath';
 
 interface BulkStudioProps {
   selectedEngine: AiEngineId;
+  capabilities: RuntimeCapabilities;
   t: TranslationDictionary;
-  onOpenCutoutInSingle: (cutout: CutoutResult, fileName: string) => void;
+  onEnsureCloudConsent: () => Promise<boolean>;
+  onOpenCutoutInSingle: (
+    cutout: CutoutResult,
+    fileName: string,
+    sourceFile: File
+  ) => void;
+}
+
+const MAX_BATCH_FILES = 80;
+
+async function decodeItemToCanvases(item: BatchItem): Promise<{
+  originalCanvas: HTMLCanvasElement;
+  maskCanvas: HTMLCanvasElement;
+}> {
+  if (!item.maskBlob) {
+    throw new Error('Mask data missing for completed item');
+  }
+  const [{ canvas: originalCanvas }, { canvas: maskCanvas }] = await Promise.all([
+    decodeSourceToCanvas(item.file),
+    decodeSourceToCanvas(item.maskBlob),
+  ]);
+  return { originalCanvas, maskCanvas };
 }
 
 export function BulkStudio({
   selectedEngine,
+  capabilities,
   t,
+  onEnsureCloudConsent,
   onOpenCutoutInSingle,
 }: BulkStudioProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [items, setItems] = useState<BatchItem[]>([]);
+  const itemsRef = useRef<BatchItem[]>([]);
+  itemsRef.current = items;
+
   const [isDragging, setIsDragging] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
-  const pauseRequestedRef = useRef(false);
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
+
+  const stopRequestedRef = useRef(false);
   const processingLoopActiveRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const [globalSettings, setGlobalSettings] = useState<BatchGlobalSettings>({
     backgroundType: 'transparent',
@@ -59,88 +97,130 @@ export function BulkStudio({
     quality: 0.92,
   });
 
-  // Keep a ref to latest globalSettings and engine for the sequential queue loop
   const globalSettingsRef = useRef(globalSettings);
   globalSettingsRef.current = globalSettings;
   const engineRef = useRef(selectedEngine);
   engineRef.current = selectedEngine;
 
-  // Regenerate live thumbnails whenever global background/ratio/watermark changes
+  // Cleanup all Blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+      for (const it of itemsRef.current) {
+        URL.revokeObjectURL(it.sourceUrl);
+        if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
+      }
+    };
+  }, []);
+
+  // Regenerate lightweight thumbnails whenever global background/ratio/watermark/format changes
   useEffect(() => {
     let cancelled = false;
     const refreshPreviews = async () => {
-      const doneItems = items.filter(
-        (it) => it.status === 'done' && it.originalCanvas && it.maskCanvas
+      const doneItems = itemsRef.current.filter(
+        (it) => it.status === 'done' && it.maskBlob
       );
       if (doneItems.length === 0) return;
 
       for (const item of doneItems) {
         if (cancelled) break;
-        if (!item.originalCanvas || !item.maskCanvas) continue;
+        let canvases: {
+          originalCanvas: HTMLCanvasElement;
+          maskCanvas: HTMLCanvasElement;
+        } | null = null;
         try {
+          canvases = await decodeItemToCanvases(item);
+          if (cancelled) break;
           const blob = await renderBatchItemBlob(
-            item.originalCanvas,
-            item.maskCanvas,
+            canvases.originalCanvas,
+            canvases.maskCanvas,
             globalSettings,
             360
           );
           if (cancelled) break;
           const nextUrl = URL.createObjectURL(blob);
+          const staleUrls: string[] = [];
           setItems((prev) =>
             prev.map((row) => {
               if (row.id !== item.id) return row;
-              if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
+              if (row.previewUrl) staleUrls.push(row.previewUrl);
               return { ...row, previewUrl: nextUrl };
             })
           );
+          if (staleUrls.length > 0) {
+            window.setTimeout(() => {
+              for (const u of staleUrls) URL.revokeObjectURL(u);
+            }, 800);
+          }
         } catch {
-          // Skip transient thumbnail errors
+          // Ignore transient thumbnail errors
+        } finally {
+          if (canvases) {
+            canvases.originalCanvas.width = 0;
+            canvases.originalCanvas.height = 0;
+            canvases.maskCanvas.width = 0;
+            canvases.maskCanvas.height = 0;
+          }
         }
       }
     };
 
-    const timer = window.setTimeout(refreshPreviews, 180);
+    const timer = window.setTimeout(refreshPreviews, 200);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-    // Trigger only when styling settings change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     globalSettings.backgroundType,
     globalSettings.customColor,
     globalSettings.aspectPreset,
     globalSettings.watermarkText,
     globalSettings.format,
+    globalSettings.quality,
   ]);
 
   const addFiles = useCallback((fileList: FileList | File[]) => {
-    const incoming = Array.from(fileList).filter((f) =>
-      f.type.startsWith('image/') || /\.(png|jpe?g|webp|avif)$/i.test(f.name)
+    const incoming = Array.from(fileList).filter(
+      (f) => f.type.startsWith('image/') || /\.(png|jpe?g|webp|avif)$/i.test(f.name)
     );
     if (incoming.length === 0) return;
 
-    const newItems: BatchItem[] = incoming.slice(0, 60).map((file, idx) => ({
-      id: `batch-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`,
-      file,
-      name: file.name,
-      sourceUrl: URL.createObjectURL(file),
-      status: 'queued',
-      progress: 0,
-    }));
-
-    setItems((prev) => [...prev, ...newItems]);
+    setBatchNotice(null);
+    setItems((prev) => {
+      const remainingSlots = Math.max(0, MAX_BATCH_FILES - prev.length);
+      if (remainingSlots === 0) {
+        setBatchNotice(`Maximum ${MAX_BATCH_FILES} images per batch queue.`);
+        return prev;
+      }
+      const accepted = incoming.slice(0, remainingSlots);
+      if (incoming.length > remainingSlots) {
+        setBatchNotice(
+          `Added ${accepted.length} images (batch limit ${MAX_BATCH_FILES}).`
+        );
+      }
+      const newItems: BatchItem[] = accepted.map((file, idx) => ({
+        id: `batch-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`,
+        file,
+        name: file.name,
+        sourceUrl: URL.createObjectURL(file),
+        selected: true,
+        status: 'queued',
+        progress: 0,
+      }));
+      return [...prev, ...newItems];
+    });
   }, []);
 
   const handleLoadSamples = async () => {
     const sampleFiles: File[] = [];
     for (const sample of SAMPLE_PHOTOS) {
       try {
-        const res = await fetch(sample.url);
-        const blob = await res.blob();
-        sampleFiles.push(new File([blob], sample.fileName, { type: blob.type || 'image/jpeg' }));
+        const blob = await resolveImageSourceToBlob(sample.url);
+        sampleFiles.push(
+          new File([blob], sample.fileName, { type: blob.type || 'image/jpeg' })
+        );
       } catch {
-        // Ignore single sample fetch failure
+        // Ignore single sample failure
       }
     }
     if (sampleFiles.length > 0) {
@@ -148,48 +228,67 @@ export function BulkStudio({
     }
   };
 
-  // Sequential RAM-safe processor loop
   const runSequentialQueue = useCallback(async () => {
     if (processingLoopActiveRef.current) return;
+
+    if (engineRef.current === 'notlain-cloud') {
+      const ok = await onEnsureCloudConsent();
+      if (!ok) return;
+    }
+
+    if (capabilities.isFileProtocol && engineRef.current !== 'notlain-cloud') {
+      setBatchNotice(t.fileModeAiBlocked);
+      return;
+    }
+
+    setBatchNotice(null);
     processingLoopActiveRef.current = true;
-    pauseRequestedRef.current = false;
+    stopRequestedRef.current = false;
+    setIsStopping(false);
     setIsRunning(true);
 
     try {
-      while (!pauseRequestedRef.current) {
-        let nextItem: BatchItem | undefined;
-        setItems((current) => {
-          nextItem = current.find((it) => it.status === 'queued');
-          return current;
-        });
-
-        // Allow state read tick
-        await new Promise((r) => setTimeout(r, 15));
-        if (!nextItem || pauseRequestedRef.current) break;
+      while (!stopRequestedRef.current) {
+        const nextItem = itemsRef.current.find((it) => it.status === 'queued');
+        if (!nextItem) break;
 
         const targetId = nextItem.id;
         const targetFile = nextItem.file;
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
 
         setItems((prev) =>
           prev.map((it) =>
             it.id === targetId
-              ? { ...it, status: 'processing', progress: 10, errorMessage: undefined }
+              ? { ...it, status: 'processing', progress: 8, errorMessage: undefined }
               : it
           )
         );
 
+        let cutout: CutoutResult | null = null;
         try {
-          const cutout = await removeBackgroundWithAI(
+          cutout = await removeBackgroundWithAI(
             targetFile,
             engineRef.current,
             (p) => {
               setItems((prev) =>
                 prev.map((it) =>
-                  it.id === targetId ? { ...it, progress: Math.max(10, p.percent) } : it
+                  it.id === targetId
+                    ? { ...it, progress: Math.max(8, p.percent) }
+                    : it
                 )
               );
-            }
+            },
+            { signal: controller.signal }
           );
+
+          // Store compressed lossless PNG maskBlob so RAM stays low across 50+ 4K images
+          const maskBlob = await new Promise<Blob>((resolve, reject) => {
+            cutout!.maskCanvas.toBlob(
+              (b) => (b ? resolve(b) : reject(new Error('Mask encoding failed'))),
+              'image/png'
+            );
+          });
 
           const previewBlob = await renderBatchItemBlob(
             cutout.originalCanvas,
@@ -198,62 +297,122 @@ export function BulkStudio({
             360
           );
           const previewUrl = URL.createObjectURL(previewBlob);
+          const oldPreviews: string[] = [];
 
           setItems((prev) =>
-            prev.map((it) =>
-              it.id === targetId
-                ? {
-                    ...it,
-                    status: 'done',
-                    progress: 100,
-                    engineUsed: cutout.engineUsed,
-                    originalCanvas: cutout.originalCanvas,
-                    maskCanvas: cutout.maskCanvas,
-                    previewUrl,
-                  }
-                : it
-            )
+            prev.map((it) => {
+              if (it.id !== targetId) return it;
+              if (it.previewUrl) oldPreviews.push(it.previewUrl);
+              return {
+                ...it,
+                status: 'done',
+                progress: 100,
+                width: cutout!.width,
+                height: cutout!.height,
+                engineUsed: cutout!.engineUsed,
+                backendUsed: cutout!.backendUsed,
+                maskBlob,
+                previewUrl,
+              };
+            })
           );
+          if (oldPreviews.length > 0) {
+            window.setTimeout(() => {
+              for (const u of oldPreviews) URL.revokeObjectURL(u);
+            }, 800);
+          }
         } catch (err) {
+          const isAborted = (err as Error)?.name === 'AbortError';
           setItems((prev) =>
             prev.map((it) =>
               it.id === targetId
                 ? {
                     ...it,
-                    status: 'error',
+                    status: isAborted ? 'queued' : 'error',
                     progress: 0,
-                    errorMessage:
-                      err instanceof Error ? err.message : 'Processing failed',
+                    errorMessage: isAborted
+                      ? undefined
+                      : err instanceof Error
+                      ? err.message
+                      : 'Processing failed',
                   }
                 : it
             )
           );
+          if (isAborted) break;
+        } finally {
+          if (cutout) {
+            cutout.originalCanvas.width = 0;
+            cutout.originalCanvas.height = 0;
+            cutout.maskCanvas.width = 0;
+            cutout.maskCanvas.height = 0;
+          }
+          abortControllerRef.current = null;
         }
+
+        // Yield briefly to keep UI responsive across long queues
+        await new Promise((r) => setTimeout(r, 16));
       }
     } finally {
       processingLoopActiveRef.current = false;
+      stopRequestedRef.current = false;
+      setIsStopping(false);
       setIsRunning(false);
     }
-  }, []);
+  }, [capabilities.isFileProtocol, onEnsureCloudConsent, t.fileModeAiBlocked]);
 
-  const handlePauseQueue = () => {
-    pauseRequestedRef.current = true;
-    setIsRunning(false);
+  const handleStopQueue = () => {
+    stopRequestedRef.current = true;
+    setIsStopping(true);
+    abortControllerRef.current?.abort();
+  };
+
+  const handleRetryFailed = () => {
+    setItems((prev) =>
+      prev.map((it) =>
+        it.status === 'error'
+          ? { ...it, status: 'queued', progress: 0, errorMessage: undefined }
+          : it
+      )
+    );
+    window.setTimeout(() => {
+      void runSequentialQueue();
+    }, 30);
   };
 
   const handleClearAll = () => {
-    pauseRequestedRef.current = true;
+    stopRequestedRef.current = true;
+    abortControllerRef.current?.abort();
     items.forEach((it) => {
       URL.revokeObjectURL(it.sourceUrl);
       if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
     });
     setItems([]);
+    setBatchNotice(null);
+  };
+
+  const handleDeleteSelected = () => {
+    setItems((prev) => {
+      const kept: BatchItem[] = [];
+      for (const it of prev) {
+        if (it.selected && it.status !== 'processing') {
+          URL.revokeObjectURL(it.sourceUrl);
+          if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
+        } else {
+          kept.push(it);
+        }
+      }
+      return kept;
+    });
   };
 
   const handleRemoveOne = (id: string) => {
     setItems((prev) => {
       const target = prev.find((it) => it.id === id);
       if (target) {
+        if (target.status === 'processing') {
+          abortControllerRef.current?.abort();
+        }
         URL.revokeObjectURL(target.sourceUrl);
         if (target.previewUrl) URL.revokeObjectURL(target.previewUrl);
       }
@@ -261,25 +420,44 @@ export function BulkStudio({
     });
   };
 
-  const handleDownloadSingle = async (item: BatchItem) => {
-    if (!item.originalCanvas || !item.maskCanvas) return;
-    const blob = await renderBatchItemBlob(
-      item.originalCanvas,
-      item.maskCanvas,
-      globalSettings
-    );
-    const ext = getExtensionForFormat(globalSettings.format);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${sanitizeExportBaseName(item.name)}-cutout.${ext}`;
-    a.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const handleToggleSelectAll = (checked: boolean) => {
+    setItems((prev) => prev.map((it) => ({ ...it, selected: checked })));
   };
 
-  const handleDownloadAllZip = async () => {
+  const handleDownloadSingle = async (item: BatchItem) => {
+    if (!item.maskBlob) return;
+    let canvases: {
+      originalCanvas: HTMLCanvasElement;
+      maskCanvas: HTMLCanvasElement;
+    } | null = null;
+    try {
+      canvases = await decodeItemToCanvases(item);
+      const blob = await renderBatchItemBlob(
+        canvases.originalCanvas,
+        canvases.maskCanvas,
+        globalSettings
+      );
+      const ext = getExtensionForFormat(globalSettings.format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sanitizeExportBaseName(item.name)}-cutout.${ext}`;
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1200);
+    } finally {
+      if (canvases) {
+        canvases.originalCanvas.width = 0;
+        canvases.originalCanvas.height = 0;
+        canvases.maskCanvas.width = 0;
+        canvases.maskCanvas.height = 0;
+      }
+    }
+  };
+
+  const handleDownloadZip = async (selectedOnly: boolean) => {
     const readyItems = items.filter(
-      (it) => it.status === 'done' && it.originalCanvas && it.maskCanvas
+      (it) =>
+        it.status === 'done' && it.maskBlob && (!selectedOnly || it.selected)
     );
     if (readyItems.length === 0) return;
 
@@ -289,27 +467,35 @@ export function BulkStudio({
       const ext = getExtensionForFormat(globalSettings.format);
       const usedNames = new Set<string>();
 
-      for (let i = 0; i < readyItems.length; i++) {
-        const item = readyItems[i];
-        if (!item.originalCanvas || !item.maskCanvas) continue;
-        const blob = await renderBatchItemBlob(
-          item.originalCanvas,
-          item.maskCanvas,
-          globalSettings
-        );
-        let base = sanitizeExportBaseName(item.name);
-        if (usedNames.has(base)) {
-          base = `${base}-${i + 1}`;
+      for (const item of readyItems) {
+        let canvases: {
+          originalCanvas: HTMLCanvasElement;
+          maskCanvas: HTMLCanvasElement;
+        } | null = null;
+        try {
+          canvases = await decodeItemToCanvases(item);
+          const blob = await renderBatchItemBlob(
+            canvases.originalCanvas,
+            canvases.maskCanvas,
+            globalSettings
+          );
+          const uniqueBase = getUniqueExportBaseName(item.name, usedNames);
+          zip.file(`${uniqueBase}-cutout.${ext}`, blob);
+        } finally {
+          if (canvases) {
+            canvases.originalCanvas.width = 0;
+            canvases.originalCanvas.height = 0;
+            canvases.maskCanvas.width = 0;
+            canvases.maskCanvas.height = 0;
+          }
         }
-        usedNames.add(base);
-        zip.file(`${base}-cutout.${ext}`, blob);
       }
 
       const zipBlob = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `noorcut-batch-${readyItems.length}-images.zip`;
+      a.download = `alhaj-cut-batch-${readyItems.length}-images.zip`;
       a.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1500);
     } finally {
@@ -317,32 +503,41 @@ export function BulkStudio({
     }
   };
 
-  const handleOpenInSingle = (item: BatchItem) => {
-    if (!item.originalCanvas || !item.maskCanvas) return;
-    const maskCtx = item.maskCanvas.getContext('2d', { willReadFrequently: true });
+  const handleOpenInSingle = async (item: BatchItem) => {
+    if (!item.maskBlob) return;
+    const { originalCanvas, maskCanvas } = await decodeItemToCanvases(item);
+    const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
     if (!maskCtx) return;
     const initialMaskData = maskCtx.getImageData(
       0,
       0,
-      item.maskCanvas.width,
-      item.maskCanvas.height
+      maskCanvas.width,
+      maskCanvas.height
     );
     onOpenCutoutInSingle(
       {
-        originalCanvas: item.originalCanvas,
-        maskCanvas: item.maskCanvas,
+        originalCanvas,
+        maskCanvas,
         initialMaskData,
-        width: item.originalCanvas.width,
-        height: item.originalCanvas.height,
+        width: originalCanvas.width,
+        height: originalCanvas.height,
         engineUsed: item.engineUsed || selectedEngine,
+        backendUsed: item.backendUsed,
         durationMs: 0,
       },
-      item.name
+      item.name,
+      item.file
     );
   };
 
   const completedCount = items.filter((it) => it.status === 'done').length;
   const queuedCount = items.filter((it) => it.status === 'queued').length;
+  const failedCount = items.filter((it) => it.status === 'error').length;
+  const selectedCount = items.filter((it) => it.selected).length;
+  const selectedDoneCount = items.filter(
+    (it) => it.selected && it.status === 'done'
+  ).length;
+  const allSelected = items.length > 0 && selectedCount === items.length;
 
   return (
     <div className="space-y-6">
@@ -376,6 +571,12 @@ export function BulkStudio({
             )}
           </div>
         </div>
+
+        {batchNotice && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-800">
+            {batchNotice}
+          </div>
+        )}
 
         {/* Multi-file Dropzone */}
         <div
@@ -423,7 +624,7 @@ export function BulkStudio({
         </div>
 
         {/* Global Batch Settings Toolbar */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 border-t border-[#E5E7EB] pt-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 border-t border-[#E5E7EB] pt-5">
           {/* Global Background */}
           <div className="space-y-1.5">
             <label
@@ -439,7 +640,8 @@ export function BulkStudio({
                 onChange={(e) =>
                   setGlobalSettings((prev) => ({
                     ...prev,
-                    backgroundType: e.target.value as BatchGlobalSettings['backgroundType'],
+                    backgroundType: e.target
+                      .value as BatchGlobalSettings['backgroundType'],
                   }))
                 }
                 className="h-9 flex-1 rounded-lg border border-[#E5E7EB] bg-white px-2.5 text-xs font-medium text-[#111827]"
@@ -518,6 +720,34 @@ export function BulkStudio({
             </select>
           </div>
 
+          {/* Global Compression Quality */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs font-semibold text-[#475569]">
+              <span>{t.exportQualityLabel}</span>
+              <span className="tabular-nums">
+                {globalSettings.format === 'image/png'
+                  ? '100%'
+                  : `${Math.round(globalSettings.quality * 100)}%`}
+              </span>
+            </div>
+            <input
+              type="range"
+              aria-label={t.exportQualityLabel}
+              disabled={globalSettings.format === 'image/png'}
+              min={0.5}
+              max={1}
+              step={0.02}
+              value={globalSettings.quality}
+              onChange={(e) =>
+                setGlobalSettings((prev) => ({
+                  ...prev,
+                  quality: Number(e.target.value),
+                }))
+              }
+              className="studio-slider w-full mt-2 disabled:opacity-40"
+            />
+          </div>
+
           {/* Global Text Watermark */}
           <div className="space-y-1.5">
             <label
@@ -547,21 +777,53 @@ export function BulkStudio({
       {items.length > 0 && (
         <div className="rounded-2xl border border-[#E5E7EB] bg-white p-5 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E5E7EB] pb-4">
-            <div className="flex items-center gap-3 text-sm">
+            <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
               <span className="font-bold text-[#111827] tabular-nums">
                 {completedCount} / {items.length} {t.bulkProcessedCount}
               </span>
-              {items.length > 0 && (
-                <div className="hidden sm:block h-2 w-40 overflow-hidden rounded-full bg-[#F3F4F6]">
-                  <div
-                    className="h-full bg-[#0D9488] transition-all duration-300"
-                    style={{ width: `${Math.round((completedCount / items.length) * 100)}%` }}
-                  />
-                </div>
+              <div className="hidden sm:block h-2 w-36 overflow-hidden rounded-full bg-[#F3F4F6]">
+                <div
+                  className="h-full bg-[#0D9488] transition-all duration-300"
+                  style={{
+                    width: `${Math.round((completedCount / items.length) * 100)}%`,
+                  }}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleToggleSelectAll(!allSelected)}
+                className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 py-1 text-xs font-semibold text-[#475569] hover:text-[#111827] cursor-pointer"
+              >
+                {allSelected ? t.bulkDeselectAll : t.bulkSelectAll} ({selectedCount})
+              </button>
+
+              {selectedCount > 0 && !isRunning && (
+                <button
+                  type="button"
+                  onClick={handleDeleteSelected}
+                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100 cursor-pointer"
+                >
+                  <Trash2 className="h-3 w-3" aria-hidden="true" />
+                  <span>{t.bulkDeleteSelected}</span>
+                </button>
               )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {failedCount > 0 && !isRunning && (
+                <button
+                  type="button"
+                  onClick={handleRetryFailed}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>
+                    {t.bulkRetryFailed} ({failedCount})
+                  </span>
+                </button>
+              )}
+
               {!isRunning ? (
                 <button
                   type="button"
@@ -575,18 +837,33 @@ export function BulkStudio({
               ) : (
                 <button
                   type="button"
-                  onClick={handlePauseQueue}
-                  className="inline-flex items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-4 py-2 text-xs font-semibold text-[#1E293B] hover:bg-[#F3F4F6] transition-colors cursor-pointer"
+                  disabled={isStopping}
+                  onClick={handleStopQueue}
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-4 py-2 text-xs font-semibold text-[#1E293B] hover:bg-[#F3F4F6] disabled:opacity-60 transition-colors cursor-pointer"
                 >
                   <Pause className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>{t.bulkPauseQueue}</span>
+                  <span>{isStopping ? t.bulkStopping : t.bulkPauseQueue}</span>
+                </button>
+              )}
+
+              {selectedDoneCount > 0 && selectedDoneCount < completedCount && (
+                <button
+                  type="button"
+                  disabled={isZipping}
+                  onClick={() => handleDownloadZip(true)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#1E293B] bg-white px-3.5 py-2 text-xs font-semibold text-[#1E293B] hover:bg-[#F3F4F6] disabled:opacity-45 transition-colors cursor-pointer"
+                >
+                  <Archive className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>
+                    {t.bulkDownloadSelectedZip} ({selectedDoneCount})
+                  </span>
                 </button>
               )}
 
               <button
                 type="button"
                 disabled={completedCount === 0 || isZipping}
-                onClick={handleDownloadAllZip}
+                onClick={() => handleDownloadZip(false)}
                 className="inline-flex items-center gap-2 rounded-xl bg-[#1E293B] px-4 py-2 text-xs font-semibold text-white hover:bg-[#0F172A] disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer"
               >
                 {isZipping ? (
@@ -606,17 +883,38 @@ export function BulkStudio({
             {items.map((item) => (
               <article
                 key={item.id}
-                className="flex flex-col overflow-hidden rounded-xl border border-[#E5E7EB] bg-[#F9FAFB]"
+                className={`flex flex-col overflow-hidden rounded-xl border transition-colors ${
+                  item.selected
+                    ? 'border-[#0D9488]/60 bg-[#F9FAFB]'
+                    : 'border-[#E5E7EB] bg-[#F9FAFB]'
+                }`}
               >
                 <div className="relative aspect-[4/3] w-full overflow-hidden checkerboard-grid">
                   <img
                     src={item.previewUrl || item.sourceUrl}
                     alt={item.name}
-                    referrerPolicy="no-referrer"
                     className={`h-full w-full object-contain transition-opacity ${
                       item.status === 'processing' ? 'opacity-60' : 'opacity-100'
                     }`}
                   />
+
+                  <label className="absolute top-2 start-2 flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 shadow-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${item.name}`}
+                      checked={item.selected}
+                      onChange={(e) =>
+                        setItems((prev) =>
+                          prev.map((row) =>
+                            row.id === item.id
+                              ? { ...row, selected: e.target.checked }
+                              : row
+                          )
+                        )
+                      }
+                      className="h-4 w-4 rounded accent-[#0D9488] cursor-pointer"
+                    />
+                  </label>
 
                   <button
                     type="button"
@@ -629,7 +927,10 @@ export function BulkStudio({
 
                   {item.status === 'processing' && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/75 backdrop-blur-xs px-4">
-                      <Loader2 className="h-5 w-5 animate-spin text-[#0D9488]" aria-hidden="true" />
+                      <Loader2
+                        className="h-5 w-5 animate-spin text-[#0D9488]"
+                        aria-hidden="true"
+                      />
                       <span className="mt-2 text-xs font-semibold text-[#111827] tabular-nums">
                         {item.progress}%
                       </span>
@@ -645,7 +946,10 @@ export function BulkStudio({
                     <div className="mt-1 flex items-center gap-1.5 text-[11px]">
                       {item.status === 'done' && (
                         <>
-                          <CheckCircle2 className="h-3.5 w-3.5 text-[#0D9488]" aria-hidden="true" />
+                          <CheckCircle2
+                            className="h-3.5 w-3.5 text-[#0D9488]"
+                            aria-hidden="true"
+                          />
                           <span className="font-medium text-[#0D9488]">
                             {t.bulkStatusDone}
                           </span>
@@ -660,8 +964,12 @@ export function BulkStudio({
                         </span>
                       )}
                       {item.status === 'error' && (
-                        <span className="font-medium text-rose-600">
+                        <span
+                          title={item.errorMessage}
+                          className="font-medium text-rose-600 truncate"
+                        >
                           {t.bulkStatusError}
+                          {item.errorMessage ? `: ${item.errorMessage}` : ''}
                         </span>
                       )}
                     </div>
@@ -686,6 +994,31 @@ export function BulkStudio({
                         <span>{t.bulkOpenInStudio}</span>
                       </button>
                     </div>
+                  )}
+
+                  {item.status === 'error' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setItems((prev) =>
+                          prev.map((row) =>
+                            row.id === item.id
+                              ? {
+                                  ...row,
+                                  status: 'queued',
+                                  progress: 0,
+                                  errorMessage: undefined,
+                                }
+                              : row
+                          )
+                        );
+                        window.setTimeout(() => void runSequentialQueue(), 30);
+                      }}
+                      className="flex items-center justify-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition-colors cursor-pointer"
+                    >
+                      <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                      <span>{t.processingRetry}</span>
+                    </button>
                   )}
                 </div>
               </article>

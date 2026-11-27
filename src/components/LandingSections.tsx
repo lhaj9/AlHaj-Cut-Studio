@@ -35,7 +35,6 @@ export function LandingSections({ locale, t }: LandingSectionsProps) {
   return (
     <div className="pt-10">
       <div className="mx-auto max-w-[1440px] space-y-14 px-4 sm:px-6 lg:px-8 pb-16">
-        {/* Configurable Monetization Slot below studio */}
         <AdSlot slotKey="belowStudio" t={t} />
 
         {/* Features & Architecture Section */}
@@ -116,7 +115,7 @@ export function LandingSections({ locale, t }: LandingSectionsProps) {
         <div className="mx-auto flex max-w-[1440px] flex-col sm:flex-row items-center justify-between gap-4 px-4 sm:px-6 lg:px-8 py-8 text-xs text-[#64748B]">
           <div className="flex items-center gap-2.5">
             <BrandLogo size={24} />
-            <span className="font-bold text-[#111827]">{brandName}</span>
+            <span dir="ltr" className="font-bold text-[#111827]">{brandName}</span>
             <span aria-hidden="true">·</span>
             <span>{t.footerPrivacyNote}</span>
           </div>

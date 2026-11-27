@@ -8,12 +8,55 @@ import {
   buildCanvasFilterString,
   computeCanvasDimensions,
   computeCoverRect,
+  computeExportDimensions,
   computeSubjectRect,
   DEFAULT_COLOR_ADJUSTMENTS,
   GRADIENT_PRESETS,
 } from './studioMath';
 
+const MAX_BG_CACHE_ENTRIES = 8;
 const loadedBgImageCache = new Map<string, HTMLImageElement>();
+
+// Reusable offscreen scratch canvases to prevent per-frame 4K memory spikes & GC churn
+let scratchMaskedCanvas: HTMLCanvasElement | null = null;
+let scratchTintCanvas: HTMLCanvasElement | null = null;
+let scratchStrokeCanvas: HTMLCanvasElement | null = null;
+
+function getOrResizeCanvas(
+  existing: HTMLCanvasElement | null,
+  width: number,
+  height: number
+): HTMLCanvasElement {
+  const c = existing || document.createElement('canvas');
+  const targetW = Math.max(1, Math.round(width));
+  const targetH = Math.max(1, Math.round(height));
+  if (c.width !== targetW || c.height !== targetH) {
+    c.width = targetW;
+    c.height = targetH;
+  } else {
+    const ctx = c.getContext('2d');
+    ctx?.clearRect(0, 0, targetW, targetH);
+  }
+  return c;
+}
+
+export function evictBgImageCache(url?: string | null) {
+  if (url) {
+    loadedBgImageCache.delete(url);
+  }
+}
+
+export function releaseCompositorScratchBuffers() {
+  for (const c of [scratchMaskedCanvas, scratchTintCanvas, scratchStrokeCanvas]) {
+    if (c) {
+      c.width = 0;
+      c.height = 0;
+    }
+  }
+  scratchMaskedCanvas = null;
+  scratchTintCanvas = null;
+  scratchStrokeCanvas = null;
+}
 
 export async function loadImageElement(url: string): Promise<HTMLImageElement> {
   const existing = loadedBgImageCache.get(url);
@@ -22,37 +65,52 @@ export async function loadImageElement(url: string): Promise<HTMLImageElement> {
   }
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
-    el.crossOrigin = 'anonymous';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      el.crossOrigin = 'anonymous';
+    }
     el.onload = () => resolve(el);
     el.onerror = () => reject(new Error('Failed to load background image'));
     el.src = url;
   });
+
+  if (loadedBgImageCache.size >= MAX_BG_CACHE_ENTRIES) {
+    const oldestKey = loadedBgImageCache.keys().next().value;
+    if (oldestKey) loadedBgImageCache.delete(oldestKey);
+  }
   loadedBgImageCache.set(url, img);
   return img;
 }
 
 /**
- * Creates a masked subject offscreen canvas by combining originalCanvas with mutable maskCanvas.
+ * Combines originalCanvas with mutable maskCanvas into a reusable scratch canvas
+ * sized cleanly to target draw dimensions (saves >90% RAM during interactive preview).
  */
 function buildMaskedSubjectCanvas(
   originalCanvas: HTMLCanvasElement,
-  maskCanvas: HTMLCanvasElement
+  maskCanvas: HTMLCanvasElement,
+  targetWidth: number,
+  targetHeight: number
 ): HTMLCanvasElement {
-  const out = document.createElement('canvas');
-  out.width = originalCanvas.width;
-  out.height = originalCanvas.height;
-  const ctx = out.getContext('2d');
-  if (!ctx) return out;
+  scratchMaskedCanvas = getOrResizeCanvas(
+    scratchMaskedCanvas,
+    targetWidth,
+    targetHeight
+  );
+  const ctx = scratchMaskedCanvas.getContext('2d');
+  if (!ctx) return scratchMaskedCanvas;
 
-  ctx.drawImage(originalCanvas, 0, 0);
-  ctx.globalCompositeOperation = 'destination-in';
-  ctx.drawImage(maskCanvas, 0, 0, originalCanvas.width, originalCanvas.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.globalCompositeOperation = 'source-over';
-  return out;
+  ctx.drawImage(originalCanvas, 0, 0, targetWidth, targetHeight);
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.drawImage(maskCanvas, 0, 0, targetWidth, targetHeight);
+  ctx.globalCompositeOperation = 'source-over';
+  return scratchMaskedCanvas;
 }
 
 /**
- * Generates an alpha-dilated YouTube Sticker Outline silhouette canvas in the requested color.
+ * Generates an alpha-dilated Sticker Outline silhouette canvas in the requested color.
  */
 function buildStickerStrokeCanvas(
   maskCanvas: HTMLCanvasElement,
@@ -62,39 +120,38 @@ function buildStickerStrokeCanvas(
   strokeColor: string
 ): { canvas: HTMLCanvasElement; pad: number } {
   const pad = Math.ceil(strokeWidth) + 2;
-  const w = Math.max(1, Math.round(drawWidth) + pad * 2);
-  const h = Math.max(1, Math.round(drawHeight) + pad * 2);
+  const dw = Math.max(1, Math.round(drawWidth));
+  const dh = Math.max(1, Math.round(drawHeight));
+  const w = dw + pad * 2;
+  const h = dh + pad * 2;
 
-  // Step 1: Create solid tinted silhouette of the mask at target scale
-  const tintCanvas = document.createElement('canvas');
-  tintCanvas.width = Math.max(1, Math.round(drawWidth));
-  tintCanvas.height = Math.max(1, Math.round(drawHeight));
-  const tintCtx = tintCanvas.getContext('2d');
+  scratchTintCanvas = getOrResizeCanvas(scratchTintCanvas, dw, dh);
+  const tintCtx = scratchTintCanvas.getContext('2d');
   if (tintCtx) {
-    tintCtx.drawImage(maskCanvas, 0, 0, tintCanvas.width, tintCanvas.height);
+    tintCtx.imageSmoothingEnabled = true;
+    tintCtx.imageSmoothingQuality = 'high';
+    tintCtx.globalCompositeOperation = 'source-over';
+    tintCtx.drawImage(maskCanvas, 0, 0, dw, dh);
     tintCtx.globalCompositeOperation = 'source-in';
     tintCtx.fillStyle = strokeColor;
-    tintCtx.fillRect(0, 0, tintCanvas.width, tintCanvas.height);
+    tintCtx.fillRect(0, 0, dw, dh);
+    tintCtx.globalCompositeOperation = 'source-over';
   }
 
-  // Step 2: Radial multi-pass alpha dilation for smooth sticker outline
-  const out = document.createElement('canvas');
-  out.width = w;
-  out.height = h;
-  const ctx = out.getContext('2d');
+  scratchStrokeCanvas = getOrResizeCanvas(scratchStrokeCanvas, w, h);
+  const ctx = scratchStrokeCanvas.getContext('2d');
   if (ctx) {
     const steps = Math.max(16, Math.min(36, Math.ceil(strokeWidth * 2)));
     for (let i = 0; i < steps; i++) {
       const angle = (i / steps) * Math.PI * 2;
       const dx = Math.cos(angle) * strokeWidth;
       const dy = Math.sin(angle) * strokeWidth;
-      ctx.drawImage(tintCanvas, pad + dx, pad + dy);
+      ctx.drawImage(scratchTintCanvas, pad + dx, pad + dy);
     }
-    // Fill inner core as well so semi-transparent border fringes stay solid
-    ctx.drawImage(tintCanvas, pad, pad);
+    ctx.drawImage(scratchTintCanvas, pad, pad);
   }
 
-  return { canvas: out, pad };
+  return { canvas: scratchStrokeCanvas, pad };
 }
 
 function drawTextLayer(
@@ -150,6 +207,7 @@ export interface RenderOptions {
   state: StudioEditState;
   customBgImage?: HTMLImageElement | null;
   maxPreviewDimension?: number;
+  exportScale?: number;
   watermarkText?: string;
   watermarkOpacity?: number;
   forceOpaqueBackgroundForJpg?: boolean;
@@ -159,7 +217,7 @@ export interface RenderOptions {
  * True non-destructive 5-layer HTML5 Canvas compositor:
  * 1. Background Layer (Transparent / Solid / Gradient / Image / DSLR Bokeh)
  * 2. Text Behind Subject Layer
- * 3. Shadow & Sticker Stroke Layer
+ * 3. Shadow & Sticker Stroke Layer (pure offscreen shadow projection avoids alpha doubling)
  * 4. Subject Cutout Layer (original + mutable alpha mask + subject color adjustments)
  * 5. Foreground Text & Optional Watermark Layer
  */
@@ -175,22 +233,38 @@ export function renderStudioComposite(options: RenderOptions): {
     state,
     customBgImage,
     maxPreviewDimension,
+    exportScale = 1,
     watermarkText,
     watermarkOpacity = 0.55,
     forceOpaqueBackgroundForJpg = false,
   } = options;
 
-  const fullDims = computeCanvasDimensions(
+  const baseDims = computeCanvasDimensions(
     originalCanvas.width,
     originalCanvas.height,
     state.aspectPreset
   );
 
-  let renderW = fullDims.width;
-  let renderH = fullDims.height;
+  const scaledDims = maxPreviewDimension
+    ? baseDims
+    : computeExportDimensions(
+        originalCanvas.width,
+        originalCanvas.height,
+        state.aspectPreset,
+        exportScale
+      );
 
-  if (maxPreviewDimension && (renderW > maxPreviewDimension || renderH > maxPreviewDimension)) {
-    const downscale = Math.min(maxPreviewDimension / renderW, maxPreviewDimension / renderH);
+  let renderW = scaledDims.width;
+  let renderH = scaledDims.height;
+
+  if (
+    maxPreviewDimension &&
+    (renderW > maxPreviewDimension || renderH > maxPreviewDimension)
+  ) {
+    const downscale = Math.min(
+      maxPreviewDimension / renderW,
+      maxPreviewDimension / renderH
+    );
     renderW = Math.max(1, Math.round(renderW * downscale));
     renderH = Math.max(1, Math.round(renderH * downscale));
   }
@@ -210,10 +284,11 @@ export function renderStudioComposite(options: RenderOptions): {
   }
 
   ctx.clearRect(0, 0, renderW, renderH);
-  const scaleFromFull = renderW / fullDims.width;
+  // Reference scale always compares against unscaled base aspect dimensions for 1:1 preview/export parity
+  const scaleFromBase = renderW / baseDims.width;
 
   // ------------------------------------------------------------------
-  // LAYER 1: BACKGROUND LAYER (Transparent / Solid / Gradient / Image / DSLR Bokeh)
+  // LAYER 1: BACKGROUND LAYER
   // ------------------------------------------------------------------
   const bg = state.background;
   ctx.save();
@@ -253,7 +328,7 @@ export function renderStudioComposite(options: RenderOptions): {
     );
     ctx.drawImage(customBgImage, rect.x, rect.y, rect.width, rect.height);
   } else if (bg.mode === 'bokeh') {
-    const blurPx = Math.max(0, bg.bokehBlur * scaleFromFull);
+    const blurPx = Math.max(0, bg.bokehBlur * scaleFromBase);
     const bleed = Math.ceil(blurPx * 2.5);
     ctx.filter = buildCanvasFilterString(state.bgAdjust, blurPx);
     const rect = computeCoverRect(
@@ -287,15 +362,22 @@ export function renderStudioComposite(options: RenderOptions): {
     state.subjectOffsetY
   );
 
-  // Build masked subject cutout from original + editable alpha mask
-  const maskedSubject = buildMaskedSubjectCanvas(originalCanvas, maskCanvas);
+  // Build masked subject cutout sized to target subject draw box (or full source when upscaled)
+  const subjectDrawW = Math.max(1, Math.round(subjectRect.width));
+  const subjectDrawH = Math.max(1, Math.round(subjectRect.height));
+  const maskedSubject = buildMaskedSubjectCanvas(
+    originalCanvas,
+    maskCanvas,
+    subjectDrawW,
+    subjectDrawH
+  );
 
   // ------------------------------------------------------------------
-  // LAYER 3: STUDIO DROP SHADOW & YOUTUBE STICKER STROKE LAYER
+  // LAYER 3: STUDIO DROP SHADOW & STICKER STROKE LAYER
   // ------------------------------------------------------------------
   const fx = state.effects;
   const strokeWidthScaled = fx.strokeEnabled
-    ? Math.max(1, fx.strokeWidth * scaleFromFull)
+    ? Math.max(0.5, fx.strokeWidth * scaleFromBase)
     : 0;
 
   let stickerAsset: { canvas: HTMLCanvasElement; pad: number } | null = null;
@@ -310,24 +392,25 @@ export function renderStudioComposite(options: RenderOptions): {
   }
 
   if (fx.shadowEnabled && fx.shadowOpacity > 0) {
+    // Shift caster off-canvas so ONLY the drop shadow renders (prevents semi-transparent alpha doubling)
+    const offscreenShift = renderW + Math.max(2000, Math.round(fx.shadowBlur * 4 + 200));
     ctx.save();
     ctx.globalAlpha = fx.shadowOpacity;
     ctx.shadowColor = fx.shadowColor;
-    ctx.shadowBlur = fx.shadowBlur * scaleFromFull;
-    ctx.shadowOffsetX = fx.shadowOffsetX * scaleFromFull;
-    ctx.shadowOffsetY = fx.shadowOffsetY * scaleFromFull;
+    ctx.shadowBlur = fx.shadowBlur * scaleFromBase;
+    ctx.shadowOffsetX = fx.shadowOffsetX * scaleFromBase + offscreenShift;
+    ctx.shadowOffsetY = fx.shadowOffsetY * scaleFromBase;
 
-    // Draw shadow caster offscreen-shifted or directly underneath subject
     if (stickerAsset) {
       ctx.drawImage(
         stickerAsset.canvas,
-        subjectRect.x - stickerAsset.pad,
+        subjectRect.x - stickerAsset.pad - offscreenShift,
         subjectRect.y - stickerAsset.pad
       );
     } else {
       ctx.drawImage(
         maskedSubject,
-        subjectRect.x,
+        subjectRect.x - offscreenShift,
         subjectRect.y,
         subjectRect.width,
         subjectRect.height
@@ -347,7 +430,7 @@ export function renderStudioComposite(options: RenderOptions): {
   }
 
   // ------------------------------------------------------------------
-  // LAYER 4: SUBJECT CUTOUT LAYER (with independent Subject Color Adjustments)
+  // LAYER 4: SUBJECT CUTOUT LAYER
   // ------------------------------------------------------------------
   ctx.save();
   ctx.filter = buildCanvasFilterString(state.subjectAdjust);
@@ -416,20 +499,27 @@ export function paintMaskBrushStroke(
 
   const radius = Math.max(2, brushSize / 2);
   const dist = Math.hypot(toX - fromX, toY - fromY);
-  const step = Math.max(1, radius * 0.28);
+  const step = Math.max(1, radius * 0.25);
   const steps = Math.max(1, Math.ceil(dist / step));
 
   ctx.save();
   ctx.globalCompositeOperation = mode === 'erase' ? 'destination-out' : 'source-over';
 
-  const innerRatio = Math.max(0.05, Math.min(0.95, 1 - softness * 0.85));
+  const innerRatio = Math.max(0.05, Math.min(0.98, 1 - softness * 0.85));
 
   for (let i = 0; i <= steps; i++) {
     const t = steps === 0 ? 0 : i / steps;
     const cx = fromX + (toX - fromX) * t;
     const cy = fromY + (toY - fromY) * t;
 
-    const grad = ctx.createRadialGradient(cx, cy, radius * innerRatio, cx, cy, radius);
+    const grad = ctx.createRadialGradient(
+      cx,
+      cy,
+      radius * innerRatio,
+      cx,
+      cy,
+      radius
+    );
     grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
     grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
 
@@ -515,6 +605,7 @@ export async function renderBatchItemBlob(
     exportSettings: {
       format: globalSettings.format,
       quality: globalSettings.quality,
+      scale: 1,
       fileName: 'batch',
     },
   };
@@ -530,5 +621,14 @@ export async function renderBatchItemBlob(
     forceOpaqueBackgroundForJpg: globalSettings.format === 'image/jpeg',
   });
 
-  return exportCanvasToBlob(canvas, globalSettings.format, globalSettings.quality);
+  try {
+    return await exportCanvasToBlob(
+      canvas,
+      globalSettings.format,
+      globalSettings.quality
+    );
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
 }

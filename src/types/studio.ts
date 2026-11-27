@@ -1,5 +1,26 @@
 export type AiEngineId = 'rmbg-local' | 'imgly-local' | 'notlain-cloud';
 
+export type AiExecutionBackend =
+  | 'webgpu'
+  | 'wasm-mt'
+  | 'wasm-st'
+  | 'cloud'
+  | 'manual';
+
+export interface RuntimeCapabilities {
+  protocol: 'http' | 'https' | 'file';
+  isFileProtocol: boolean;
+  isSecureContext: boolean;
+  crossOriginIsolated: boolean;
+  hasWebGPU: boolean;
+  webgpuAdapterName?: string;
+  webgpuFp16: boolean;
+  hasSharedArrayBuffer: boolean;
+  recommendedThreads: number;
+  isOnline: boolean;
+  localAiSupported: boolean;
+}
+
 export type WorkspaceMode = 'single' | 'bulk';
 
 export type InspectorTab =
@@ -89,7 +110,7 @@ export type AspectPresetId =
 export interface BrushSettings {
   active: boolean;
   mode: 'erase' | 'restore';
-  size: number; // 8..120 px (in image space)
+  size: number; // 8..120 px (in normalized 1000px reference space)
   softness: number; // 0..1
 }
 
@@ -98,6 +119,7 @@ export type ExportFormat = 'image/png' | 'image/webp' | 'image/jpeg';
 export interface ExportSettings {
   format: ExportFormat;
   quality: number; // 0.5..1.0
+  scale: number; // 0.5 | 0.75 | 1
   fileName: string;
 }
 
@@ -116,8 +138,15 @@ export interface StudioEditState {
 }
 
 export interface EngineProgress {
-  phase: 'loading-runtime' | 'downloading-model' | 'inferring' | 'refining' | 'fallback';
+  phase:
+    | 'loading-runtime'
+    | 'downloading-model'
+    | 'inferring'
+    | 'refining'
+    | 'fallback';
   percent: number;
+  engineId?: AiEngineId;
+  backend?: AiExecutionBackend;
   loadedMB?: number;
   totalMB?: number;
   message?: string;
@@ -130,6 +159,7 @@ export interface CutoutResult {
   width: number;
   height: number;
   engineUsed: AiEngineId;
+  backendUsed?: AiExecutionBackend;
   fallbackFrom?: AiEngineId;
   fallbackReason?: string;
   durationMs: number;
@@ -152,17 +182,20 @@ export interface BatchItem {
   file: File;
   name: string;
   sourceUrl: string;
+  selected: boolean;
   status: BatchItemStatus;
   progress: number;
+  width?: number;
+  height?: number;
   engineUsed?: AiEngineId;
+  backendUsed?: AiExecutionBackend;
   errorMessage?: string;
-  originalCanvas?: HTMLCanvasElement;
-  maskCanvas?: HTMLCanvasElement;
+  maskBlob?: Blob;
   previewUrl?: string;
 }
 
 export interface SamplePhoto {
-  id: string;
+  id: 'portrait' | 'product' | 'sneaker';
   labelKey: 'samplePortrait' | 'sampleProduct' | 'sampleSneaker';
   url: string;
   fileName: string;

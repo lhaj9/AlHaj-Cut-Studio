@@ -1,0 +1,54 @@
+{
+  "/onnxruntime-web/ort-wasm-simd-threaded.wasm": {
+    "mime": "application/wasm",
+    "size": 12666427,
+    "chunks": [
+      {
+        "name": "ort-wasm-simd-threaded.wasm",
+        "offsets": [
+          0,
+          12666427
+        ]
+      }
+    ]
+  },
+  "/onnxruntime-web/ort-wasm-simd-threaded.mjs": {
+    "mime": "text/javascript",
+    "size": 26583,
+    "chunks": [
+      {
+        "name": "ort-wasm-simd-threaded.mjs",
+        "offsets": [
+          0,
+          26583
+        ]
+      }
+    ]
+  },
+  "/onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm": {
+    "mime": "application/wasm",
+    "size": 23914392,
+    "chunks": [
+      {
+        "name": "ort-wasm-simd-threaded.jsep.wasm",
+        "offsets": [
+          0,
+          23914392
+        ]
+      }
+    ]
+  },
+  "/onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs": {
+    "mime": "text/javascript",
+    "size": 53602,
+    "chunks": [
+      {
+        "name": "ort-wasm-simd-threaded.jsep.mjs",
+        "offsets": [
+          0,
+          53602
+        ]
+      }
+    ]
+  }
+}

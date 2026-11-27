@@ -588,6 +588,26 @@ export function StudioInspector({
                           className="studio-slider w-full"
                         />
                       </div>
+
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs text-[#475569]">
+                          <span>{t.textOpacityLabel}</span>
+                          <span className="tabular-nums">
+                            {Math.round(selectedText.opacity * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0.1}
+                          max={1}
+                          step={0.05}
+                          value={selectedText.opacity}
+                          onChange={(e) =>
+                            updateSelectedText({ opacity: Number(e.target.value) })
+                          }
+                          className="studio-slider w-full"
+                        />
+                      </div>
                     </div>
 
                     <p className="text-[11px] text-[#64748B]">{t.textDragHint}</p>
@@ -1165,6 +1185,33 @@ export function StudioInspector({
                     }`}
                   >
                     {fmt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="block text-xs font-semibold text-[#475569]">
+                {t.exportScaleLabel}
+              </span>
+              <div className="grid grid-cols-3 gap-1.5 rounded-xl bg-[#F3F4F6] p-1">
+                {([1, 0.75, 0.5] as const).map((sc) => (
+                  <button
+                    key={sc}
+                    type="button"
+                    onClick={() =>
+                      onUpdateState((prev) => ({
+                        ...prev,
+                        exportSettings: { ...prev.exportSettings, scale: sc },
+                      }))
+                    }
+                    className={`rounded-lg py-1.5 text-xs font-bold tabular-nums transition-colors cursor-pointer ${
+                      (state.exportSettings.scale || 1) === sc
+                        ? 'bg-white text-[#0D9488] shadow-sm'
+                        : 'text-[#475569] hover:text-[#111827]'
+                    }`}
+                  >
+                    {Math.round(sc * 100)}%
                   </button>
                 ))}
               </div>

@@ -1,7 +1,10 @@
-import samplePortraitUrl from '../assets/images/sample_portrait_1795738780064.jpg';
-import sampleProductUrl from '../assets/images/sample_product_1795738780558.jpg';
-import sampleSneakerUrl from '../assets/images/sample_sneaker_1795738780068.jpg';
+import samplePortraitUrl from '../assets/images/sample-portrait.jpg';
+import samplePortraitCutoutUrl from '../assets/images/sample-portrait2.png';
+import sampleProductUrl from '../assets/images/sample-product.jpg';
+import sampleSneakerUrl from '../assets/images/sample-sneaker.jpg';
 import type { SamplePhoto } from '../types/studio';
+
+export const HERO_SHOWCASE_AFTER_URL = samplePortraitCutoutUrl;
 
 export const SAMPLE_PHOTOS: SamplePhoto[] = [
   {

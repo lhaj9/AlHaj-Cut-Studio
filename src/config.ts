@@ -1,23 +1,21 @@
 /**
  * Central Brand & Monetization Configuration
- * Edit this single object to rebrand the entire application instantly.
+ * Edit this single object to update branding or configure AdSense.
  */
 export const BRAND_CONFIG = {
-  id: 'noorcut-studio',
+  id: 'alhaj-cut-studio',
   name: {
-    ar: 'نور كات ستوديو',
-    en: 'NoorCut Studio',
-    pt: 'NoorCut Studio',
-    fr: 'NoorCut Studio',
+    ar: 'AIHAJ Cut Studio',
+    en: 'AlHaj Cut Studio',
+    pt: 'AlHaj Cut Studio',
+    fr: 'AlHaj Cut Studio',
   },
   shortName: {
-    ar: 'نور كات',
-    en: 'NoorCut',
-    pt: 'NoorCut',
-    fr: 'NoorCut',
+    ar: 'AIHAJ Cut',
+    en: 'AlHaj Cut',
+    pt: 'AlHaj Cut',
+    fr: 'AlHaj Cut',
   },
-  domain: 'noorcut.studio',
-  contactEmail: 'hello@noorcut.studio',
   colors: {
     primary: '#0D9488',
     secondary: '#1E293B',
@@ -26,15 +24,14 @@ export const BRAND_CONFIG = {
   },
   /**
    * Monetization & Google AdSense Configuration
-   * Set `enabled: true` and enter your real Google AdSense publisher ID and slot IDs
-   * to activate live ad rendering on your shared hosting domain.
+   * Disabled by default until real Google AdSense publisher & slot IDs are configured.
    */
   ads: {
-    enabled: true,
+    enabled: false,
     adsenseClientId: '', // e.g., 'ca-pub-XXXXXXXXXXXXXXXX'
     slots: {
-      topBanner: '', // Horizontal leaderboard slot ID
-      belowStudio: '', // Responsive rectangle / multiplex slot ID
+      topBanner: '',
+      belowStudio: '',
     },
   },
 } as const;

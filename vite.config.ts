@@ -1,36 +1,15 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import fs from 'fs';
 import path from 'path';
-import {defineConfig} from 'vite';
+import { fileURLToPath } from 'url';
+import { defineConfig } from 'vite';
+
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(() => {
   return {
     base: './',
-    plugins: [
-      react(),
-      tailwindcss(),
-      // Copies src/assets into dist/ so root-relative URLs still resolve
-      // in production builds alongside Vite-hashed imports.
-      {
-        name: 'copy-unbundled-src-assets',
-        apply: 'build' as const,
-        closeBundle(error?: Error): void {
-          if (error) {
-            return;
-          }
-          const distDir = path.resolve(__dirname, 'dist');
-          const srcAssets = path.resolve(__dirname, 'src/assets');
-          const distAssets = path.resolve(distDir, 'src/assets');
-          if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
-            fs.cpSync(srcAssets, distAssets, {recursive: true, force: true});
-          }
-        },
-      },
-    ],
-    worker: {
-      format: 'es' as const,
-    },
+    plugins: [react(), tailwindcss()],
     optimizeDeps: {
       exclude: [
         '@imgly/background-removal',
@@ -41,6 +20,8 @@ export default defineConfig(() => {
     },
     build: {
       target: 'es2022',
+      cssCodeSplit: false,
+      assetsInlineLimit: 0,
       rollupOptions: {
         external: [
           '@imgly/background-removal',
@@ -48,17 +29,33 @@ export default defineConfig(() => {
           'onnxruntime-web',
           '@gradio/client',
         ],
+        output: {
+          format: 'iife',
+          entryFileNames: 'assets/js/app.js',
+          chunkFileNames: 'assets/js/[name].js',
+          assetFileNames: (assetInfo) => {
+            const name = assetInfo.names?.[0] || assetInfo.name || '';
+            if (name.endsWith('.css')) {
+              return 'assets/css/app.css';
+            }
+            if (/\.(woff2?|ttf|otf|eot)$/i.test(name)) {
+              return 'assets/fonts/[name][extname]';
+            }
+            if (/\.(png|jpe?g|webp|avif|gif)$/i.test(name)) {
+              return 'assets/images/[name][extname]';
+            }
+            if (/\.svg$/i.test(name)) {
+              return 'assets/icons/[name][extname]';
+            }
+            return 'assets/[name][extname]';
+          },
+        },
       },
     },
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': rootDir,
       },
-    },
-    server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };
 });

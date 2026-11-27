@@ -88,7 +88,9 @@ export const SOLID_COLOR_PRESETS = [
   { id: 'cobalt', color: '#1D4ED8', labelKey: 'presetCobalt' },
 ] as const;
 
-export function createInitialEditState(fileName = 'noorcut-export'): StudioEditState {
+export function createInitialEditState(
+  fileName = 'alhaj-cut-export'
+): StudioEditState {
   return {
     background: {
       mode: 'transparent',
@@ -119,6 +121,7 @@ export function createInitialEditState(fileName = 'noorcut-export'): StudioEditS
     exportSettings: {
       format: 'image/png',
       quality: 0.92,
+      scale: 1,
       fileName,
     },
   };
@@ -130,7 +133,7 @@ export interface Dimensions {
 }
 
 /**
- * Computes final export canvas pixel dimensions for a given aspect ratio preset.
+ * Computes base composite canvas pixel dimensions for a given aspect ratio preset.
  */
 export function computeCanvasDimensions(
   originalWidth: number,
@@ -153,6 +156,23 @@ export function computeCanvasDimensions(
     default:
       return { width: safeW, height: safeH };
   }
+}
+
+/**
+ * Computes final export pixel dimensions applying both aspect preset and resolution scale.
+ */
+export function computeExportDimensions(
+  originalWidth: number,
+  originalHeight: number,
+  preset: AspectPresetId,
+  scale = 1
+): Dimensions {
+  const base = computeCanvasDimensions(originalWidth, originalHeight, preset);
+  const clampedScale = Math.max(0.25, Math.min(2, Number.isFinite(scale) ? scale : 1));
+  return {
+    width: Math.max(1, Math.round(base.width * clampedScale)),
+    height: Math.max(1, Math.round(base.height * clampedScale)),
+  };
 }
 
 export interface PlacementRect {
@@ -217,9 +237,156 @@ export function computeCoverRect(
 }
 
 /**
+ * Computes exact CSS display dimensions to fit a canvas inside a viewport stage without aspect distortion.
+ */
+export function computeFittedDisplaySize(
+  canvasWidth: number,
+  canvasHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  padding = 32,
+  maxUpscale = 4
+): Dimensions {
+  const cW = Math.max(1, canvasWidth);
+  const cH = Math.max(1, canvasHeight);
+  const availW = Math.max(120, viewportWidth - padding);
+  const availH = Math.max(120, viewportHeight - padding);
+
+  const fitRatio = Math.min(availW / cW, availH / cH, maxUpscale);
+  return {
+    width: Math.max(1, Math.round(cW * fitRatio)),
+    height: Math.max(1, Math.round(cH * fitRatio)),
+  };
+}
+
+/**
+ * Clamps pan offsets so a portion of the zoomed canvas always remains reachable inside the viewport.
+ */
+export function clampPanOffset(
+  panX: number,
+  panY: number,
+  displayWidth: number,
+  displayHeight: number,
+  zoom: number,
+  viewportWidth: number,
+  viewportHeight: number
+): { x: number; y: number } {
+  const scaledW = displayWidth * zoom;
+  const scaledH = displayHeight * zoom;
+  const visibleMarginX = Math.min(96, scaledW * 0.25);
+  const visibleMarginY = Math.min(96, scaledH * 0.25);
+
+  const maxOffsetX = Math.max(0, (viewportWidth + scaledW) / 2 - visibleMarginX);
+  const maxOffsetY = Math.max(0, (viewportHeight + scaledH) / 2 - visibleMarginY);
+
+  return {
+    x: Math.max(-maxOffsetX, Math.min(maxOffsetX, panX)),
+    y: Math.max(-maxOffsetY, Math.min(maxOffsetY, panY)),
+  };
+}
+
+/**
+ * Adjusts pan when zooming around a specific point inside the viewport so that pixel stays anchored.
+ */
+export function computeZoomAroundPoint(
+  currentZoom: number,
+  nextZoom: number,
+  currentPan: { x: number; y: number },
+  cursorLocalX: number,
+  cursorLocalY: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  displayWidth: number,
+  displayHeight: number
+): { zoom: number; pan: { x: number; y: number } } {
+  const safeCurrentZoom = Math.max(0.1, currentZoom);
+  const clampedZoom = Math.max(0.25, Math.min(5, Number(nextZoom.toFixed(3))));
+  const dx = cursorLocalX - viewportWidth / 2;
+  const dy = cursorLocalY - viewportHeight / 2;
+
+  const localX = (dx - currentPan.x) / safeCurrentZoom;
+  const localY = (dy - currentPan.y) / safeCurrentZoom;
+
+  const rawPanX = dx - localX * clampedZoom;
+  const rawPanY = dy - localY * clampedZoom;
+
+  const pan = clampPanOffset(
+    rawPanX,
+    rawPanY,
+    displayWidth,
+    displayHeight,
+    clampedZoom,
+    viewportWidth,
+    viewportHeight
+  );
+
+  return { zoom: clampedZoom, pan };
+}
+
+/**
+ * Maps screen client coordinates into internal canvas pixels accurately under CSS transform zoom & pan.
+ */
+export function screenToCanvasPoint(
+  clientX: number,
+  clientY: number,
+  canvasRect: { left: number; top: number; width: number; height: number },
+  canvasWidth: number,
+  canvasHeight: number
+): { cx: number; cy: number } | null {
+  if (canvasRect.width <= 0 || canvasRect.height <= 0) return null;
+  const cx = ((clientX - canvasRect.left) / canvasRect.width) * canvasWidth;
+  const cy = ((clientY - canvasRect.top) / canvasRect.height) * canvasHeight;
+  return { cx, cy };
+}
+
+/**
+ * Maps internal composite canvas pixels to mutable original mask canvas coordinates.
+ */
+export function canvasToMaskPoint(
+  cx: number,
+  cy: number,
+  subjectRect: PlacementRect,
+  maskWidth: number,
+  maskHeight: number
+): { mx: number; my: number } | null {
+  if (subjectRect.width <= 0 || subjectRect.height <= 0) return null;
+  const mx = ((cx - subjectRect.x) / subjectRect.width) * maskWidth;
+  const my = ((cy - subjectRect.y) / subjectRect.height) * maskHeight;
+  return { mx, my };
+}
+
+/**
+ * Computes exact CSS diameter (px) of the brush cursor ring matching the painted stroke in mask space.
+ */
+export function computeScreenBrushDiameter(
+  brushSize: number,
+  cutoutWidth: number,
+  cutoutHeight: number,
+  maskWidth: number,
+  subjectRectWidth: number,
+  canvasWidth: number,
+  canvasRectWidth: number
+): number {
+  if (maskWidth <= 0 || canvasWidth <= 0 || canvasRectWidth <= 0) {
+    return Math.max(8, Math.round(brushSize));
+  }
+  const resFactor = Math.max(cutoutWidth, cutoutHeight) / 1000;
+  const maskStrokeDiameter = brushSize * resFactor;
+  const maskToCanvasScale = subjectRectWidth / maskWidth;
+  const canvasToScreenScale = canvasRectWidth / canvasWidth;
+  return Math.max(
+    8,
+    Math.round(maskStrokeDiameter * maskToCanvasScale * canvasToScreenScale)
+  );
+}
+
+/**
  * Builds an HTML5 Canvas 2D CSS filter string from studio color adjustments.
  */
-export function buildCanvasFilterString(adjust: ColorAdjustments, extraBlurPx = 0): string {
+export function buildCanvasFilterString(
+  adjust: ColorAdjustments,
+  extraBlurPx = 0
+): string {
   const filters: string[] = [];
 
   if (adjust.brightness !== 100) {
@@ -232,10 +399,8 @@ export function buildCanvasFilterString(adjust: ColorAdjustments, extraBlurPx = 
     filters.push(`saturate(${adjust.saturation}%)`);
   }
   if (adjust.warmth > 0) {
-    // Positive warmth adds gentle sepia warmth
     filters.push(`sepia(${Math.min(60, Math.round(adjust.warmth * 0.9))}%)`);
   } else if (adjust.warmth < 0) {
-    // Negative warmth shifts subtly cooler via hue-rotate
     filters.push(`hue-rotate(${Math.max(-25, Math.round(adjust.warmth * 0.45))}deg)`);
   }
   if (extraBlurPx > 0) {
@@ -281,12 +446,29 @@ export function sanitizeExportBaseName(rawName: string): string {
     .trim()
     .replace(/[^a-zA-Z0-9\u0600-\u06FF_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  return cleaned || 'noorcut-studio';
+  return cleaned || 'alhaj-cut-studio';
 }
 
 /**
- * Resolves the fallback engine order for resilient Triple-Engine AI execution.
- * Engine 1 (rmbg-local) is always the guaranteed on-device safety net.
+ * Generates collision-free export base names across batch items (e.g. photo, photo-2, photo-3).
+ */
+export function getUniqueExportBaseName(
+  rawName: string,
+  usedNames: Set<string>
+): string {
+  const base = sanitizeExportBaseName(rawName);
+  let candidate = base;
+  let suffix = 2;
+  while (usedNames.has(candidate)) {
+    candidate = `${base}-${suffix++}`;
+  }
+  usedNames.add(candidate);
+  return candidate;
+}
+
+/**
+ * Resolves the fallback engine order.
+ * Local engines NEVER auto-upload user photos to cloud services on failure.
  */
 export function resolveFallbackEngines(preferred: AiEngineId): AiEngineId[] {
   switch (preferred) {

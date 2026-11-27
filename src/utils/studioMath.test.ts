@@ -2,21 +2,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildCanvasFilterString,
+  canvasToMaskPoint,
+  clampPanOffset,
   computeCanvasDimensions,
   computeCoverRect,
+  computeExportDimensions,
+  computeFittedDisplaySize,
+  computeScreenBrushDiameter,
   computeSubjectRect,
+  computeZoomAroundPoint,
   createHistoryStack,
   DEFAULT_COLOR_ADJUSTMENTS,
   formatFileSize,
   getExtensionForFormat,
+  getUniqueExportBaseName,
   pushHistory,
   redoHistory,
   resolveFallbackEngines,
   sanitizeExportBaseName,
+  screenToCanvasPoint,
   undoHistory,
-} from './studioMath';
+} from './studioMath.ts';
 
-test('computeCanvasDimensions handles original and all e-commerce aspect presets', () => {
+test('computeCanvasDimensions and computeExportDimensions handle aspect presets and scale', () => {
   assert.deepEqual(computeCanvasDimensions(3840, 2160, 'original'), {
     width: 3840,
     height: 2160,
@@ -37,6 +45,14 @@ test('computeCanvasDimensions handles original and all e-commerce aspect presets
     width: 1050,
     height: 1350,
   });
+  assert.deepEqual(computeExportDimensions(2000, 1000, 'original', 0.5), {
+    width: 1000,
+    height: 500,
+  });
+  assert.deepEqual(computeExportDimensions(2000, 1000, 'youtube-16-9', 0.75), {
+    width: 1440,
+    height: 810,
+  });
 });
 
 test('computeSubjectRect centers and fits wide subject inside square canvas', () => {
@@ -55,6 +71,64 @@ test('computeCoverRect covers canvas with bleed margin for DSLR bokeh', () => {
   assert.equal(rect.y, -270);
 });
 
+test('computeFittedDisplaySize preserves exact aspect ratio for large, small, portrait, and landscape images', () => {
+  const wide = computeFittedDisplaySize(3840, 2160, 800, 600, 40, 4);
+  assert.equal(wide.width, 760);
+  assert.equal(wide.height, 428);
+
+  const tall = computeFittedDisplaySize(1080, 1920, 800, 600, 40, 4);
+  assert.equal(tall.height, 560);
+  assert.equal(tall.width, 315);
+
+  const tiny = computeFittedDisplaySize(100, 100, 800, 600, 40, 4);
+  assert.equal(tiny.width, 400);
+  assert.equal(tiny.height, 400);
+});
+
+test('clampPanOffset prevents losing canvas outside viewport and computeZoomAroundPoint keeps cursor anchored', () => {
+  const clamped = clampPanOffset(9999, -9999, 600, 400, 2, 800, 600);
+  assert.ok(clamped.x < 9999 && clamped.x > 0);
+  assert.ok(clamped.y > -9999 && clamped.y < 0);
+
+  const zoomed = computeZoomAroundPoint(
+    1,
+    2,
+    { x: 0, y: 0 },
+    500,
+    400,
+    800,
+    600,
+    600,
+    400
+  );
+  assert.equal(zoomed.zoom, 2);
+  assert.equal(zoomed.pan.x, -100);
+  assert.equal(zoomed.pan.y, -100);
+});
+
+test('screen/canvas/mask coordinate mapping and brush preview size remain accurate under zoom and aspect presets', () => {
+  const cPt = screenToCanvasPoint(
+    300,
+    200,
+    { left: 100, top: 100, width: 400, height: 200 },
+    1920,
+    1080
+  );
+  assert.deepEqual(cPt, { cx: 960, cy: 540 });
+
+  const mPt = canvasToMaskPoint(
+    960,
+    540,
+    { x: 420, y: 0, width: 1080, height: 1080 },
+    1000,
+    1000
+  );
+  assert.deepEqual(mPt, { mx: 500, my: 500 });
+
+  const diam = computeScreenBrushDiameter(40, 1000, 1000, 1000, 1080, 1920, 800);
+  assert.equal(diam, 18);
+});
+
 test('buildCanvasFilterString returns none for neutral adjustments and valid filters otherwise', () => {
   assert.equal(buildCanvasFilterString(DEFAULT_COLOR_ADJUSTMENTS), 'none');
   assert.equal(
@@ -70,7 +144,7 @@ test('buildCanvasFilterString returns none for neutral adjustments and valid fil
   );
 });
 
-test('formatFileSize, extension mapping, and filename sanitization work across Arabic and Latin', () => {
+test('formatFileSize, extension mapping, filename sanitization, and collision-free batch names work cleanly', () => {
   assert.equal(formatFileSize(0), '0 KB');
   assert.equal(formatFileSize(512), '512 B');
   assert.equal(formatFileSize(48 * 1024), '48.0 KB');
@@ -80,10 +154,15 @@ test('formatFileSize, extension mapping, and filename sanitization work across A
   assert.equal(getExtensionForFormat('image/jpeg'), 'jpg');
   assert.equal(sanitizeExportBaseName('صورة منتج 2026.jpg'), 'صورة-منتج-2026');
   assert.equal(sanitizeExportBaseName('  my photo (final).png '), 'my-photo-final');
-  assert.equal(sanitizeExportBaseName('...'), 'noorcut-studio');
+  assert.equal(sanitizeExportBaseName('...'), 'alhaj-cut-studio');
+
+  const used = new Set<string>();
+  assert.equal(getUniqueExportBaseName('photo-2.jpg', used), 'photo-2');
+  assert.equal(getUniqueExportBaseName('photo.jpg', used), 'photo');
+  assert.equal(getUniqueExportBaseName('photo.png', used), 'photo-3');
 });
 
-test('resolveFallbackEngines guarantees automatic local fallback for all 3 engines', () => {
+test('resolveFallbackEngines never sends local-engine images to cloud fallback', () => {
   assert.deepEqual(resolveFallbackEngines('notlain-cloud'), [
     'notlain-cloud',
     'rmbg-local',
