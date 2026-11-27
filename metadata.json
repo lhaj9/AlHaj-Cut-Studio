@@ -1,6 +1,0 @@
-{
-  "name": "AlHaj Cut Studio",
-  "description": "All-in-One AI Background Remover, Bulk Cutout & Creative Photo Studio running locally in your browser with WebGPU/WASM AI engines, Text Behind Subject, DSLR Bokeh, and ZIP Batch Export.",
-  "requestFramePermissions": [],
-  "majorCapabilities": []
-}

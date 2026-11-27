@@ -4,7 +4,7 @@ This document lists the libraries, fonts, and AI models used in **AlHaj Cut Stud
 
 ---
 
-## 1. Runtime & UI Libraries (Bundled in `AlHaj-Cut-Studio-Static`)
+## 1. Runtime & UI Libraries (Bundled in Root Static Site)
 
 | Package | Version | License | Commercial Use Notes |
 |---|---|---|---|
@@ -42,7 +42,7 @@ This document lists the libraries, fonts, and AI models used in **AlHaj Cut Stud
 
 ---
 
-## 4. Build-Only Tooling (Not Included in `AlHaj-Cut-Studio-Static`)
+## 4. Build-Only Tooling (Isolated inside `_dev/`, Not Uploaded)
 
 | Package | Version | License |
 |---|---|---|

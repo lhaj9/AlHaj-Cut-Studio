@@ -3,7 +3,7 @@
 1. **Direct `file://` Protocol Browser Restrictions:**
    - Modern browsers (Chrome, Edge, Firefox) enforce strict `origin: null` security rules under `file://` that block `fetch()` against local `.wasm` binaries, ES module imports, Service Workers, and `new Worker()` scripts.
    - As a result, when double-clicking `index.html` directly over `file://`, all UI, sample photos, Manual Studio editing, Magic Brush, Text Behind Subject, DSLR Bokeh, Effects, Resize, Zoom/Pan, and PNG/WebP/JPG/ZIP exports work locally, while local WebGPU/WASM AI engines are intentionally blocked by browser security.
-   - **Solution:** Launch `AlHaj-Cut-Studio-Static/START.bat` (Windows PowerShell static server on `127.0.0.1`, no Node.js required) or host on HTTPS (e.g. GitHub Pages) to unlock full local AI engines.
+   - **Solution:** Launch `_dev/START.bat` (Windows PowerShell static server serving root on `127.0.0.1`, ignored by `.gitignore`, no Node.js required) or host on HTTPS (e.g. GitHub Pages) to unlock full local AI engines.
 
 2. **First-Time Internet Connection for AI Model Weights:**
    - To keep the static distribution compact and avoid multi-hundred-megabyte bloat on initial page load, neural model weights (`briaai/RMBG-1.4` / `Xenova/modnet` from Hugging Face, `isnet_fp16` ~84.1 MB from `staticimgly.com`) are downloaded on demand on first use and cached persistently via browser Cache Storage.

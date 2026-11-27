@@ -12,8 +12,7 @@
 ### Static Web App Conversion & `file://` Compatibility
 - Removed unused packages (`@google/genai`, `express`, `@types/express`, `dotenv`, `motion`, `autoprefixer`) and Google AI Studio remnants (`.env.example`, `bun.lock`).
 - Replaced external runtime CDNs (`cdn.jsdelivr.net`, `esm.sh`, `fonts.googleapis.com`, `fonts.gstatic.com`, floating `@gradio/client/+esm`) with pinned local vendor IIFE bundles (`assets/vendor/`), local ONNX WASM assets (`assets/wasm/`), and bundled local WOFF2 fonts (`assets/fonts/`).
-- Built `scripts/build-static.mjs` to output the self-contained `AlHaj-Cut-Studio-Static/` folder using a classic non-module IIFE `assets/js/app.js` script and relative `./` paths compatible with `file://`, `START.bat` localhost, and GitHub Pages subpaths.
-- Added `AlHaj-Cut-Studio-Static/START.bat` (pure Windows PowerShell `TcpListener` localhost-only server with COOP/COEP headers and automatic port probing) and `.github/workflows/deploy-pages.yml` + `.nojekyll`.
+- Moved all development source, Node/Vite build tooling, and local `START.bat` launcher into the gitignored `_dev/` directory so the repository root serves directly as a flat static site (`index.html`, `assets/`, `manifest.webmanifest`, `coi-serviceworker.js`, `.nojekyll`) ready for `file://` drag-and-drop and GitHub Pages root deployment.
 
 ### Sample Photos & Asset Optimization
 - Optimized bundled sample photos (`sample-portrait.jpg`, `sample-product.jpg`, `sample-sneaker.jpg`) from ~2.39 MB combined down to ~555 KB total progressive JPEGs without reducing pixel dimensions.

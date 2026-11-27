@@ -1,8 +1,13 @@
+_dev/
+dev/
+AlHaj-Cut-Studio-Static/
+START.bat
+*.bat
 node_modules/
 build/
 dist/
 coverage/
+.aistudio/
 .DS_Store
 *.log
 .env*
-!.env.example

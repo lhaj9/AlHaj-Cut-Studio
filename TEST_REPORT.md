@@ -1,6 +1,6 @@
 # Test Report — AlHaj Cut Studio
 
-All automated unit tests, TypeScript checks, and browser E2E suites listed below were executed directly against the final source and `AlHaj-Cut-Studio-Static/` build in this session.
+All automated unit tests, TypeScript checks, and browser E2E suites listed below were executed directly against `_dev/` source and the published repository root static site in this session.
 
 ---
 
@@ -10,7 +10,7 @@ All automated unit tests, TypeScript checks, and browser E2E suites listed below
 |---|---|---|---|
 | Unit Tests | `npm test` (`node --experimental-strip-types --test src/utils/studioMath.test.ts`) | Aspect presets, export scale, subject/cover rects, fitted display sizing, pan clamping, cursor-anchored zoom, screen/canvas/mask coordinate mapping, brush diameter math, CSS filters, file size formatting, filename sanitization, collision-free batch naming, fallback privacy rules, undo/redo history stack | **PASS (10/10)** |
 | TypeScript Check | `npm run lint` (`tsc --noEmit`) | Full `src/` strict compilation | **PASS (0 errors)** |
-| Static Bundle Build | `npm run build` (`node scripts/build-static.mjs`) | Vite IIFE app bundle, local font bundling, esbuild vendor runtimes, local WASM copy, `sample-inline.js`, HTML patching, `AlHaj-Cut-Studio-Static/` generation | **PASS** |
+| Static Bundle Build | `npm run build` (`node scripts/build-static.mjs` inside `_dev/`) | Vite IIFE app bundle, local font bundling, esbuild vendor runtimes, local WASM copy, `sample-inline.js`, HTML patching, direct root static publish + `_dev/START.bat` | **PASS** |
 
 ---
 
@@ -27,7 +27,7 @@ All automated unit tests, TypeScript checks, and browser E2E suites listed below
 | Scenario | Browsers | Observed Outcome |
 |---|---|---|
 | `START.bat` script & PowerShell `TcpListener` probe | Windows PowerShell | **PASS** — Binds strictly to `127.0.0.1`, sets `Cross-Origin-Opener-Policy: same-origin` & `Cross-Origin-Embedder-Policy: credentialless`, serves `application/wasm` MIME type |
-| `file://` direct opening (`AlHaj-Cut-Studio-Static/index.html`) | Chromium, Chrome, Edge | **PASS** — Zero console/page errors, `file://` notice displayed, Arabic RTL (`dir="rtl"`) active, all 3 sample thumbnails and Hero Before/After showcase (`sample-portrait.jpg` / `sample-portrait2.png`, `1200×896`) load cleanly |
+| `file://` direct opening (`index.html` in project root) | Chromium, Chrome, Edge | **PASS** — Zero console/page errors, `file://` notice displayed, Arabic RTL (`dir="rtl"`) active, all 3 sample thumbnails and Hero Before/After showcase (`sample-portrait.jpg` / `sample-portrait2.png`, `1200×896`) load cleanly |
 | 4-Language switching (`ar`, `en`, `pt`, `fr`) | Chromium, Chrome, Edge | **PASS** — `dir="rtl"` for `ar`, `dir="ltr"` for `en`/`pt`/`fr`, document title updates to `AlHaj Cut Studio` / `AIHAJ Cut Studio`, zero `NoorCut` or `الحاج` strings |
 | Sample photo click -> Studio Canvas (`file://`) | Chromium, Chrome, Edge | **PASS** — Opens in Manual Studio without canvas tainting, canvas renders at exact `729×544` (`1200:896`) ratio, and immediate direct mouse-drag pans image cleanly |
 | Editing Tools (`file://`): Solid/Bokeh BG, Text Behind Subject, Sticker Stroke, Drop Shadow, Magic Brush, Undo/Redo, 1:1 Resize, Compare Curtain, Wheel Zoom, Direct Mouse Pan, Zoom Fit | Chromium, Chrome, Edge | **PASS** — Hand toggle button verified removed (`count === 0`), Undo/Redo active, `1:1` resize verified, Compare curtain toggle & pixel restoration (`w >= 1000, h >= 1000, alpha > 200`) verified, wheel zoom & direct free mouse-drag pan verified (`init_drag=True`, `pan_moved=True`) |
@@ -35,8 +35,8 @@ All automated unit tests, TypeScript checks, and browser E2E suites listed below
 | Bulk Studio Sample Load (`file://`) | Chromium, Chrome, Edge | **PASS** — 3 sample cards queued cleanly, zero console/page errors |
 | GitHub Pages Subpath Simulation (`/alhaj-cut-studio/`) on Mobile (`390×844`) | Chromium, Chrome, Edge | **PASS** — `window.crossOriginIsolated === true`, zero HTTP 404s, zero horizontal overflow, mobile zoom controls visible, local PNG upload works |
 | Non-COI Single-Thread capability badge & Offline Manual fallback | Chromium, Chrome, Edge | **PASS** — Reports `WASM Single-Thread` (Chromium without GPU) / `WebGPU Ready` (Chrome/Edge), switches to `Offline Mode`, and opens photo in Manual Studio cleanly |
-| Real AI Engine 1 (`rmbg-local`) Portrait cutout + Compare restore | Google Chrome | **PASS** — Inference completed in `18.91s`, output `1200×896` verified (`tl=0`, `tr=0`, `center=255`) before and immediately after toggling Compare ON/OFF, zero external CDN JS/font requests |
-| Real AI Engine 1 Cached Model Reuse (Sneaker) | Google Chrome | **PASS** — Completed in `0.36s` without re-downloading weights (`tl=0`, `tr=0`, `center=255`) |
+| Real AI Engine 1 (`rmbg-local`) Portrait cutout + Compare restore | Google Chrome | **PASS** — Inference completed in `20.25s`, output `1200×896` verified (`tl=0`, `tr=0`, `center=255`) before and immediately after toggling Compare ON/OFF, zero external CDN JS/font requests |
+| Real AI Engine 1 Cached Model Reuse (Sneaker) | Google Chrome | **PASS** — Completed in `0.38s` without re-downloading weights (`tl=0`, `tr=0`, `center=255`) |
 | Offline AI Inference from Cached Weights (Product) | Google Chrome | **PASS** — Completed offline (`set_offline(True)`) using cached model (`1024×1024`, `tl=0`, `tr=0`, `center=255`) |
 | Real AI Engine 2 (`imgly-local` ISNet) | Google Chrome | **PASS** — Loaded 2 local WASM assets from `127.0.0.1/assets/wasm/imgly/` (`remote_wasm=[]`), produced real cutout (`1024×1024`, `tl=0`, `tr=0`, `center=255`) |
 | Bulk AI Processing (5 images + duplicate names) & ZIP Export | Google Chrome | **PASS** — Processed 5/5 items, downloaded `alhaj-cut-batch-5-images.zip` containing 5 unique cutout PNGs (`dup-cutout.png`, `dup-2-cutout.png`, plus 3 samples), opened item in Single Studio |
